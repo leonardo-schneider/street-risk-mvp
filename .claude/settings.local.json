@@ -4,7 +4,11 @@
       "Bash(pip install:*)",
       "Bash(python infrastructure/s3_setup.py)",
       "Bash(python -m pip install boto3 python-dotenv -q)",
-      "Bash(python -c \"from dotenv import load_dotenv; from pathlib import Path; load_dotenv\\(dotenv_path=Path\\('infrastructure/../.env'\\), override=True\\); import os; k=os.getenv\\('AWS_ACCESS_KEY_ID',''\\); print\\('key starts with:', k[:4] if k else 'EMPTY', '| length:', len\\(k\\)\\)\")"
+      "Bash(python -c \"from dotenv import load_dotenv; from pathlib import Path; load_dotenv\\(dotenv_path=Path\\('infrastructure/../.env'\\), override=True\\); import os; k=os.getenv\\('AWS_ACCESS_KEY_ID',''\\); print\\('key starts with:', k[:4] if k else 'EMPTY', '| length:', len\\(k\\)\\)\")",
+      "Bash(python -m pip install osmnx h3 pyarrow tqdm -q)",
+      "Bash(python pipeline/ingestion/sample_roads.py --dry-run)",
+      "Bash(python -c ':*)",
+      "Bash(python -W ignore pipeline/ingestion/sample_roads.py --dry-run)"
     ]
   }
 }
