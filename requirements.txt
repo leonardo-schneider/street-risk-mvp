@@ -1,0 +1,41 @@
+# Core
+python-dotenv
+boto3
+
+# Geospatial
+osmnx
+h3
+geopandas
+shapely
+
+# Vision
+torch
+torchvision
+transformers
+Pillow
+requests
+
+# Data
+pandas
+pyarrow
+numpy
+
+# Model
+lightgbm
+scikit-learn
+mlflow
+
+# API
+fastapi
+uvicorn
+pydantic
+
+# App
+streamlit
+folium
+streamlit-folium
+plotly
+
+# Utils
+tqdm
+loguru
