@@ -71,12 +71,11 @@ def aggregate_to_hex(df: pd.DataFrame) -> pd.DataFrame:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def make_s3():
-    return boto3.client(
-        "s3",
-        region_name=REGION,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    )
+    kwargs: dict = {"region_name": REGION}
+    if os.getenv("AWS_ACCESS_KEY_ID"):
+        kwargs["aws_access_key_id"] = os.getenv("AWS_ACCESS_KEY_ID")
+        kwargs["aws_secret_access_key"] = os.getenv("AWS_SECRET_ACCESS_KEY")
+    return boto3.client("s3", **kwargs)
 
 
 def download_image(s3, key: str) -> Image.Image:
@@ -145,6 +144,11 @@ def main(dry_run: bool = False):
         except Exception as e:
             tqdm.write(f"  [warn] Skipping {row['s3_key']}: {e}")
 
+    if not embeddings:
+        raise RuntimeError(
+            "No embeddings extracted — all image downloads failed. "
+            "Check S3 credentials and bucket name."
+        )
     embeddings = np.stack(embeddings)   # (N, 512)
     y_valid    = y[valid_idx]
     print(f"  [ok] {len(embeddings)} embeddings extracted")
@@ -152,7 +156,8 @@ def main(dry_run: bool = False):
     # 4. Train probe + 5-fold CV
     print("\nStep 4/4  Training logistic regression probe ...")
     probe  = train_probe(embeddings, y_valid)
-    cv_acc = cross_val_score(probe, embeddings, y_valid, cv=min(5, len(embeddings) // 2), scoring="accuracy")
+    n_folds = max(2, min(5, len(embeddings) // 2))
+    cv_acc = cross_val_score(probe, embeddings, y_valid, cv=n_folds, scoring="accuracy")
     print(f"  [ok] 5-fold CV accuracy: {cv_acc.mean():.3f} ± {cv_acc.std():.3f}")
 
     # Save

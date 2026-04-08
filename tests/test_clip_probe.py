@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch
 from sklearn.linear_model import LogisticRegression
 
 
