@@ -9,9 +9,12 @@ Run with:
     streamlit run app/streamlit_app.py
 """
 
+import csv
+import io as _io
 import os
 from pathlib import Path
 
+import boto3
 import folium
 import pandas as pd
 import plotly.graph_objects as go
@@ -19,10 +22,6 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
-
-import csv
-import io as _io
-import boto3
 
 # ── env ───────────────────────────────────────────────────────────────────────
 load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env", override=True)
@@ -204,11 +203,9 @@ def render_label_tab():
     col_hi, col_lo = st.columns(2)
     if col_hi.button("🔴 High Risk", use_container_width=True, type="primary"):
         save_label(s3_key, "high")
-        fetch_s3_image_bytes.clear()
         st.rerun()
     if col_lo.button("🟢 Low Risk", use_container_width=True):
         save_label(s3_key, "low")
-        fetch_s3_image_bytes.clear()
         st.rerun()
 
 
