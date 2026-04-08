@@ -99,12 +99,18 @@ def spatial_split(df: pd.DataFrame):
 def build_features(train: pd.DataFrame, test: pd.DataFrame):
     road_dummies_train = pd.get_dummies(train["road_type_primary"], prefix="road", drop_first=True)
     road_dummies_test  = pd.get_dummies(test["road_type_primary"],  prefix="road", drop_first=True)
+    road_dummies_test  = road_dummies_test.reindex(columns=road_dummies_train.columns, fill_value=0)
 
-    # Align test dummies to train columns (fill missing with 0)
-    road_dummies_test = road_dummies_test.reindex(columns=road_dummies_train.columns, fill_value=0)
+    # Auto-detect whether to use probe feature or zero-shot CLIP features
+    if "clip_risk_prob" in train.columns:
+        clip_feats = ["clip_risk_prob"]
+        print("  [probe mode] Using clip_risk_prob feature.")
+    else:
+        clip_feats = CLIP_FEATURES
+        print("  [zero-shot mode] Using 7 CLIP concept features.")
 
-    base_cols   = CLIP_FEATURES + NUMERIC_FEATURES
-    dummy_cols  = list(road_dummies_train.columns)
+    base_cols    = clip_feats + NUMERIC_FEATURES
+    dummy_cols   = list(road_dummies_train.columns)
     feature_cols = base_cols + dummy_cols
 
     X_train = pd.concat([train[base_cols].reset_index(drop=True),

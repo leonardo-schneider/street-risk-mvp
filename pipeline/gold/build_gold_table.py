@@ -13,6 +13,7 @@ Usage:
     python pipeline/gold/build_gold_table.py
 """
 
+import argparse
 import os
 from pathlib import Path
 
@@ -33,6 +34,7 @@ REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 # ── paths ─────────────────────────────────────────────────────────────────────
 CRASH_PATH = Path(__file__).parents[2] / "data" / "silver" / "crash_hex"      / "sarasota_crash_hex.parquet"
 CLIP_PATH  = Path(__file__).parents[2] / "data" / "silver" / "image_features" / "sarasota_clip_hex.parquet"
+PROBE_PATH = Path(__file__).parents[2] / "data" / "silver" / "image_features" / "sarasota_clip_probe_hex.parquet"
 ROAD_PATH  = Path(__file__).parents[2] / "data" / "bronze" / "sarasota_road_points.parquet"
 GOLD_LOCAL = Path(__file__).parents[2] / "data" / "gold"   / "training_table" / "sarasota_gold.parquet"
 GOLD_S3KEY = "gold/training_table/sarasota_gold.parquet"
@@ -47,6 +49,15 @@ FINAL_COLS = [
     "h3_index",
     "crash_density", "crash_count", "injury_rate",
     *CLIP_COLS,
+    "road_type_primary", "speed_limit_mean", "lanes_mean",
+    "dist_to_intersection_mean", "point_count",
+    "risk_tier",
+]
+
+FINAL_COLS_PROBE = [
+    "h3_index",
+    "crash_density", "crash_count", "injury_rate",
+    "clip_risk_prob",
     "road_type_primary", "speed_limit_mean", "lanes_mean",
     "dist_to_intersection_mean", "point_count",
     "risk_tier",
@@ -185,14 +196,28 @@ def print_summary(gold: pd.DataFrame, p33: float, p66: float):
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main():
+def main(use_probe: bool = False):
     print("\n- Building Gold training table -\n")
+    if use_probe:
+        print("  [probe mode] Using clip_risk_prob feature instead of 7 zero-shot CLIP cols.")
 
     # 1. Load
     print("Step 1/5  Loading Silver + Bronze inputs ...")
     crash = pd.read_parquet(CRASH_PATH)
-    clip  = pd.read_parquet(CLIP_PATH)
     roads = pd.read_parquet(ROAD_PATH)
+
+    if use_probe:
+        if not PROBE_PATH.exists():
+            raise FileNotFoundError(
+                f"Probe hex file not found: {PROBE_PATH}\n"
+                "Run `python pipeline/features/extract_clip_features.py --use-probe` first."
+            )
+        clip = pd.read_parquet(PROBE_PATH)
+        final_cols = FINAL_COLS_PROBE
+    else:
+        clip = pd.read_parquet(CLIP_PATH)
+        final_cols = FINAL_COLS
+
     print(f"  [ok] crash_hex     : {len(crash):,} hexagons")
     print(f"  [ok] clip_hex      : {len(clip):,} hexagons")
     print(f"  [ok] road_points   : {len(roads):,} points across {roads['h3_index'].nunique():,} hexagons")
@@ -212,7 +237,7 @@ def main():
     gold, p33, p66 = add_risk_tier(gold)
 
     # Enforce column order
-    gold = gold[FINAL_COLS]
+    gold = gold[final_cols]
 
     # 5. Save
     print("\nStep 5/5  Saving ...")
@@ -235,4 +260,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Build the Gold training table.")
+    parser.add_argument("--use-probe", action="store_true", help="Use probe hex features instead of zero-shot CLIP.")
+    args = parser.parse_args()
+    main(use_probe=args.use_probe)
