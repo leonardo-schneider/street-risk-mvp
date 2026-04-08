@@ -8,11 +8,13 @@ Run with:
     uvicorn api.main:app --reload --port 8000
 """
 
+import io
 import json
 import os
 from pathlib import Path
 from typing import Union
 
+import boto3
 import h3
 import joblib
 import numpy as np
@@ -43,6 +45,11 @@ GOLD_PATH      = ROOT / "data" / "gold" / "training_table" / "sarasota_gold.parq
 MODEL_PATH     = ROOT / "model" / "risk_model.pkl"
 FEAT_COLS_PATH = ROOT / "model" / "feature_columns.json"
 
+# S3 keys for production (RENDER=true)
+S3_GOLD_KEY   = "gold/training_table/sarasota_gold.parquet"
+S3_MODEL_KEY  = "gold/risk_model.pkl"
+S3_FEAT_KEY   = "gold/feature_columns.json"
+
 CLIP_COLS = [
     "clip_heavy_traffic", "clip_poor_lighting", "clip_no_sidewalks",
     "clip_damaged_road",  "clip_clear_road",    "clip_no_signals",
@@ -67,10 +74,64 @@ app.add_middleware(
 _state: dict = {}
 
 
+def _s3_client():
+    return boto3.client(
+        "s3",
+        region_name=REGION,
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    )
+
+
+def _load_from_s3():
+    """Load Gold table, model, and feature columns directly from S3 (production)."""
+    bucket = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
+    s3 = _s3_client()
+
+    print(f"[startup] Loading from S3: s3://{bucket}/")
+
+    buf = io.BytesIO()
+    s3.download_fileobj(bucket, S3_GOLD_KEY, buf)
+    buf.seek(0)
+    df = pd.read_parquet(buf)
+    print(f"[startup] Gold table loaded from S3: {len(df)} hexagons")
+
+    buf = io.BytesIO()
+    s3.download_fileobj(bucket, S3_MODEL_KEY, buf)
+    buf.seek(0)
+    model = joblib.load(buf)
+    print(f"[startup] Model loaded from S3: {S3_MODEL_KEY}")
+
+    buf = io.BytesIO()
+    s3.download_fileobj(bucket, S3_FEAT_KEY, buf)
+    feat_cols = json.loads(buf.getvalue().decode("utf-8"))
+    print(f"[startup] Feature columns loaded from S3: {len(feat_cols)} features")
+
+    return df, model, feat_cols
+
+
+def _load_from_local():
+    """Load Gold table, model, and feature columns from local disk (development)."""
+    df = pd.read_parquet(GOLD_PATH)
+    print(f"[startup] Gold table loaded from local: {len(df)} hexagons")
+    model = joblib.load(MODEL_PATH)
+    print(f"[startup] Model loaded from local: {MODEL_PATH.name}")
+    feat_cols = json.loads(FEAT_COLS_PATH.read_text())
+    return df, model, feat_cols
+
+
 @app.on_event("startup")
 def startup():
-    """Load Gold table, model, and feature columns into memory on startup."""
-    df = pd.read_parquet(GOLD_PATH)
+    """
+    Load Gold table, model, and feature columns into memory on startup.
+    Uses S3 when RENDER=true (production), local disk otherwise (development).
+    """
+    is_render = os.getenv("RENDER", "").lower() == "true"
+
+    if is_render:
+        df, model, feat_cols = _load_from_s3()
+    else:
+        df, model, feat_cols = _load_from_local()
 
     # Precompute min-max normalised risk score (0-1)
     mn, mx = df["crash_density"].min(), df["crash_density"].max()
@@ -80,13 +141,12 @@ def startup():
     df["percentile"] = df["crash_density"].rank(pct=True) * 100
 
     # Index by h3_index for O(1) lookups
-    _state["df"]    = df.set_index("h3_index")
-    _state["model"] = joblib.load(MODEL_PATH)
-    _state["feat_cols"] = json.loads(FEAT_COLS_PATH.read_text())
+    _state["df"]         = df.set_index("h3_index")
+    _state["model"]      = model
+    _state["feat_cols"]  = feat_cols
     _state["model_loaded"] = True
 
-    print(f"[startup] Gold table loaded: {len(df)} hexagons")
-    print(f"[startup] Model loaded: {MODEL_PATH.name}")
+    print(f"[startup] Ready. {'S3' if is_render else 'Local'} mode.")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
