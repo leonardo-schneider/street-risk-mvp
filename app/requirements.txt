@@ -5,3 +5,5 @@ plotly
 requests
 python-dotenv
 pandas
+boto3
+matplotlib
