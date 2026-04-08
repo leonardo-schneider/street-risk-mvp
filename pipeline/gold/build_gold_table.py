@@ -150,7 +150,7 @@ def upload(local_path: Path, bucket: str, key: str):
 
 # ── summary ───────────────────────────────────────────────────────────────────
 
-def print_summary(gold: pd.DataFrame, p33: float, p66: float):
+def print_summary(gold: pd.DataFrame, p33: float, p66: float, final_cols: list):
     n_total       = len(gold)
     n_with_crash  = (gold["crash_count"] > 0).sum()
     n_zero_crash  = n_total - n_with_crash
@@ -174,7 +174,8 @@ def print_summary(gold: pd.DataFrame, p33: float, p66: float):
     print(f"    min={d.min():.2f}  mean={d.mean():.2f}  median={d.median():.2f}  max={d.max():.2f}")
 
     print(f"\n  Feature correlations with crash_density:")
-    num_cols = CLIP_COLS + ["speed_limit_mean", "lanes_mean", "dist_to_intersection_mean", "point_count"]
+    clip_present = [c for c in gold.columns if c.startswith("clip_")]
+    num_cols = clip_present + ["speed_limit_mean", "lanes_mean", "dist_to_intersection_mean", "point_count"]
     corrs = gold[num_cols + ["crash_density"]].corr()["crash_density"].drop("crash_density")
     for col, r in corrs.sort_values(key=abs, ascending=False).items():
         bar = "#" * int(abs(r) * 30)
@@ -182,7 +183,7 @@ def print_summary(gold: pd.DataFrame, p33: float, p66: float):
         print(f"    {col:<32} {sign}{abs(r):.4f}  {bar}")
 
     print(f"\n  NaN counts per column:")
-    nan_counts = gold[FINAL_COLS].isna().sum()
+    nan_counts = gold[final_cols].isna().sum()
     any_nan = False
     for col, cnt in nan_counts.items():
         if cnt > 0:
@@ -247,7 +248,7 @@ def main(use_probe: bool = False):
     upload(GOLD_LOCAL, BUCKET, GOLD_S3KEY)
 
     # Summary
-    print_summary(gold, p33, p66)
+    print_summary(gold, p33, p66, final_cols)
 
     print(f"\n  Preview (top 5 by crash_density):")
     pd.set_option("display.max_columns", None)
