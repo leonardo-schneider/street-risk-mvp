@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pandas
+pyarrow
+lightgbm
+joblib
+h3
+numpy
+pydantic
+python-dotenv
