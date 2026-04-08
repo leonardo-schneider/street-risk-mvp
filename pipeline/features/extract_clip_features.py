@@ -42,6 +42,10 @@ HEX_FEAT_LOCAL = Path(__file__).parents[2] / "data" / "silver" / "image_features
 IMG_FEAT_S3KEY = "silver/image_features/sarasota_clip_features.parquet"
 HEX_FEAT_S3KEY = "silver/image_features/sarasota_clip_hex.parquet"
 
+PROBE_PATH          = Path(__file__).parents[2] / "model" / "clip_probe.pkl"
+PROBE_HEX_LOCAL     = Path(__file__).parents[2] / "data" / "silver" / "image_features" / "sarasota_clip_probe_hex.parquet"
+PROBE_HEX_S3KEY     = "silver/image_features/sarasota_clip_probe_hex.parquet"
+
 # ── CLIP config ───────────────────────────────────────────────────────────────
 MODEL_NAME = "openai/clip-vit-base-patch32"
 
@@ -145,6 +149,100 @@ def score_batch(
     logits  = img_emb @ text_emb.T                  # (N, 7) cosine similarities
     scores  = F.softmax(logits, dim=-1).cpu().numpy()
     return scores
+
+
+def extract_embeddings_batch(
+    images: list,
+    model,
+    processor,
+    device: str,
+) -> np.ndarray:
+    """
+    Extract raw L2-normalised CLIP image embeddings.
+    Returns (N, 512) float32 array.
+    """
+    inputs = processor(images=images, return_tensors="pt", padding=True).to(device)
+    with torch.no_grad():
+        emb = model.get_image_features(**inputs)
+    emb = F.normalize(emb, dim=-1)
+    return emb.cpu().numpy()
+
+
+def probe_mode(dry_run: bool = False, batch_size: int = 32):
+    """
+    Run probe-based scoring: extract CLIP embeddings → apply trained probe
+    → aggregate clip_risk_prob per hex → save Silver Parquet.
+    Requires model/clip_probe.pkl to exist (run train_clip_probe.py first).
+    """
+    import joblib
+
+    if not PROBE_PATH.exists():
+        raise FileNotFoundError(
+            f"Probe not found: {PROBE_PATH}\n"
+            "Run `python model/train_clip_probe.py` first."
+        )
+    probe = joblib.load(PROBE_PATH)
+    print(f"  [ok] Probe loaded: {PROBE_PATH}")
+
+    # Load manifest
+    manifest = pd.read_csv(MANIFEST_PATH)
+    manifest = manifest[manifest["status"] == "ok"].reset_index(drop=True)
+    if dry_run:
+        manifest = manifest.head(10)
+        print(f"  (--dry-run) Limited to {len(manifest)} images")
+
+    # Load CLIP + S3
+    device = "cpu"
+    model, processor = load_clip(device)
+    s3 = make_s3_client()
+
+    # Batch inference
+    rows = []
+    n = len(manifest)
+    with tqdm(total=n, desc="Probe inference", unit="img") as pbar:
+        for start in range(0, n, batch_size):
+            batch_meta = manifest.iloc[start : start + batch_size]
+            images, meta = [], []
+            for _, row in batch_meta.iterrows():
+                try:
+                    img = download_image(s3, BUCKET, row["s3_key"])
+                    images.append(img)
+                    meta.append(row)
+                except Exception as e:
+                    tqdm.write(f"  [warn] {row['s3_key']}: {e}")
+
+            if not images:
+                pbar.update(len(batch_meta))
+                continue
+
+            embs  = extract_embeddings_batch(images, model, processor, device)  # (N, 512)
+            probs = probe.predict_proba(embs)[:, 1]                              # P(high risk)
+
+            for i, row in enumerate(meta):
+                rows.append({"h3_index": row["h3_index"], "clip_risk_prob": float(probs[i])})
+
+            pbar.update(len(images))
+
+    img_probe_df = pd.DataFrame(rows)
+
+    # Aggregate to hex
+    hex_probe_df = (
+        img_probe_df.groupby("h3_index")["clip_risk_prob"]
+                    .mean()
+                    .reset_index()
+    )
+    print(f"  [ok] {len(img_probe_df)} images scored → {len(hex_probe_df)} hexagons")
+
+    # Save
+    save_parquet(hex_probe_df, PROBE_HEX_LOCAL)
+    if not dry_run:
+        upload_parquet(PROBE_HEX_LOCAL, s3, BUCKET, PROBE_HEX_S3KEY)
+
+    print(f"\n  clip_risk_prob stats:")
+    p = hex_probe_df["clip_risk_prob"]
+    print(f"    min={p.min():.4f}  mean={p.mean():.4f}  max={p.max():.4f}")
+    print("\n- Probe hex features saved. Run build_gold_table.py --use-probe next. -\n")
+    return hex_probe_df
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -259,5 +357,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dry-run",    action="store_true", help="Process 10 images only.")
     parser.add_argument("--batch-size", type=int, default=32, help="CLIP inference batch size.")
+    parser.add_argument("--use-probe",  action="store_true", help="Use trained probe instead of zero-shot scoring.")
     args = parser.parse_args()
-    main(dry_run=args.dry_run, batch_size=args.batch_size)
+
+    if args.use_probe:
+        probe_mode(dry_run=args.dry_run, batch_size=args.batch_size)
+    else:
+        main(dry_run=args.dry_run, batch_size=args.batch_size)
