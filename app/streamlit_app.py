@@ -189,7 +189,8 @@ def risk_badge(tier: str) -> str:
 
 def top_factors_chart(top_risk_factors: list, hex_data: dict) -> go.Figure:
     labels = [CLIP_LABEL.get(f, f) for f in top_risk_factors]
-    scores = [round(hex_data.get(f, 0) * 100, 2) for f in top_risk_factors]
+    clip_scores = hex_data.get("clip_scores", {})
+    scores = [round(clip_scores.get(f, 0) * 100, 3) for f in top_risk_factors]
     colors = ["#d73027", "#fc8d59", "#fee090"]
 
     fig = go.Figure(go.Bar(
@@ -264,15 +265,8 @@ if score_btn and address.strip():
             st.session_state.score_lon = lon
             st.session_state.score_data = result
 
-            # Fetch full hex detail for CLIP scores if it's a known hex
-            if result.get("risk_tier") not in ("Unknown", None):
-                try:
-                    r = requests.get(
-                        f"{API_BASE}/hex/{result['h3_index']}", timeout=10
-                    )
-                    st.session_state.hex_detail = r.json() if r.ok else result
-                except Exception:
-                    st.session_state.hex_detail = result
+            # clip_scores are already in the /predict response
+            st.session_state.hex_detail = result
 
 # Load map data
 geojson = fetch_map_data()

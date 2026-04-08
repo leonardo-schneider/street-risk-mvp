@@ -2,7 +2,7 @@
 api/schemas.py — Pydantic request/response models for the Street Risk API.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +32,7 @@ class HexRiskResponse(BaseModel):
     risk_tier: str
     risk_score_normalized: float = Field(..., description="Min-max scaled crash density, 0-1")
     top_risk_factors: List[str] = Field(..., description="Top 3 CLIP feature names sorted by score")
+    clip_scores: Dict[str, float] = Field(..., description="Raw CLIP softmax scores for all 7 risk concepts")
     hex_center: HexCenter
     percentile: float = Field(..., description="Percentile of this hex vs all hexagons (0-100)")
 

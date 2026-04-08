@@ -93,7 +93,7 @@ def startup():
 
 def _row_to_hex_response(h3_index: str, row: pd.Series) -> HexRiskResponse:
     """Convert a Gold table row into a HexRiskResponse."""
-    clip_scores = {col: row[col] for col in CLIP_COLS}
+    clip_scores = {col: round(float(row[col]), 6) for col in CLIP_COLS}
     top_risk_factors = sorted(clip_scores, key=clip_scores.get, reverse=True)[:3]
     lat, lon = h3.cell_to_latlng(h3_index)
     return HexRiskResponse(
@@ -102,6 +102,7 @@ def _row_to_hex_response(h3_index: str, row: pd.Series) -> HexRiskResponse:
         risk_tier=str(row["risk_tier"]),
         risk_score_normalized=round(float(row["risk_score_normalized"]), 6),
         top_risk_factors=top_risk_factors,
+        clip_scores=clip_scores,
         hex_center=HexCenter(lat=round(lat, 6), lon=round(lon, 6)),
         percentile=round(float(row["percentile"]), 2),
     )
