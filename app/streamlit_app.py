@@ -20,6 +20,10 @@ import streamlit as st
 from dotenv import load_dotenv
 from streamlit_folium import st_folium
 
+import csv
+import io as _io
+import boto3
+
 # ── env ───────────────────────────────────────────────────────────────────────
 load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env", override=True)
 
@@ -53,6 +57,11 @@ STREETVIEW_URL = (
     "https://maps.googleapis.com/maps/api/streetview"
     "?size=600x300&location={lat},{lon}&fov=90&pitch=0&key={key}"
 )
+
+LABELS_CSV    = Path(__file__).parents[1] / "data" / "labels" / "image_labels.csv"
+MANIFEST_PATH = Path(__file__).parents[1] / "data" / "bronze" / "image_manifest.csv"
+S3_BUCKET     = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
+IS_LOCAL      = os.getenv("RENDER", "").lower() != "true"
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -115,6 +124,92 @@ def geocode_address(address: str):
         return loc["lat"], loc["lng"]
     except Exception:
         return None
+
+
+@st.cache_data(ttl=3600)
+def fetch_s3_image_bytes(s3_key: str) -> bytes:
+    """Download image bytes from S3 Bronze. Cached per key."""
+    s3 = boto3.client(
+        "s3",
+        region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    )
+    buf = _io.BytesIO()
+    s3.download_fileobj(S3_BUCKET, s3_key, buf)
+    return buf.getvalue()
+
+
+def load_labels() -> dict:
+    """Return {s3_key: label} from labels CSV. Returns empty dict if file missing."""
+    if not LABELS_CSV.exists():
+        return {}
+    with open(LABELS_CSV, newline="") as f:
+        return {row["s3_key"]: row["label"] for row in csv.DictReader(f)}
+
+
+def save_label(s3_key: str, label: str):
+    """Append or overwrite a single label in the CSV."""
+    existing = load_labels()
+    existing[s3_key] = label
+    LABELS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with open(LABELS_CSV, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["s3_key", "label"])
+        writer.writeheader()
+        for key, lbl in existing.items():
+            writer.writerow({"s3_key": key, "label": lbl})
+
+
+def render_label_tab():
+    """Labeling UI — local-only. Hidden on Streamlit Cloud (RENDER=true)."""
+    st.subheader("Label Images")
+    st.caption("Mark each Street View image as High Risk or Low Risk to train the CLIP probe.")
+
+    if not MANIFEST_PATH.exists():
+        st.warning("Manifest not found at data/bronze/image_manifest.csv — run the ingestion pipeline first.")
+        return
+
+    manifest = pd.read_csv(MANIFEST_PATH)
+    manifest = manifest[manifest["status"] == "ok"].reset_index(drop=True)
+    labels   = load_labels()
+
+    labeled_keys   = set(labels.keys())
+    unlabeled      = manifest[~manifest["s3_key"].isin(labeled_keys)].reset_index(drop=True)
+    n_total        = len(manifest)
+    n_labeled      = len(labeled_keys)
+
+    st.progress(n_labeled / n_total, text=f"{n_labeled} / {n_total} images labeled")
+
+    if unlabeled.empty:
+        st.success("All images labeled! Run `python model/train_clip_probe.py` to train the probe.")
+        return
+
+    # Show the first unlabeled image
+    row     = unlabeled.iloc[0]
+    s3_key  = row["s3_key"]
+    h3_idx  = row["h3_index"]
+
+    st.markdown(f"**Image {n_labeled + 1} of {n_total}** — hex `{h3_idx}`")
+
+    try:
+        img_bytes = fetch_s3_image_bytes(s3_key)
+        st.image(img_bytes, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not load image from S3: {e}")
+        if st.button("Skip this image"):
+            save_label(s3_key, "skip")
+            st.rerun()
+        return
+
+    col_hi, col_lo = st.columns(2)
+    if col_hi.button("🔴 High Risk", use_container_width=True, type="primary"):
+        save_label(s3_key, "high")
+        fetch_s3_image_bytes.clear()
+        st.rerun()
+    if col_lo.button("🟢 Low Risk", use_container_width=True):
+        save_label(s3_key, "low")
+        fetch_s3_image_bytes.clear()
+        st.rerun()
 
 
 # ── map builder ───────────────────────────────────────────────────────────────
@@ -271,58 +366,61 @@ if score_btn and address.strip():
 # Load map data
 geojson = fetch_map_data()
 
-# Layout
-col_map, col_card = st.columns([6, 4])
+# Tabs
+if IS_LOCAL:
+    tab_map, tab_compare, tab_label = st.tabs(["Risk Map", "Compare", "Label Images"])
+else:
+    tab_map, tab_compare = st.tabs(["Risk Map", "Compare"])
 
-with col_map:
-    st.subheader("Risk map — Sarasota, FL")
-    m = build_map(
-        geojson,
-        scored_lat=st.session_state.score_lat,
-        scored_lon=st.session_state.score_lon,
-        scored_data=st.session_state.score_data,
-    )
-    st_folium(m, width=None, height=520, returned_objects=[])
+with tab_map:
+    col_map, col_card = st.columns([6, 4])
 
-with col_card:
-    st.subheader("Risk assessment")
+    with col_map:
+        st.subheader("Risk map — Sarasota, FL")
+        m = build_map(
+            geojson,
+            scored_lat=st.session_state.score_lat,
+            scored_lon=st.session_state.score_lon,
+            scored_data=st.session_state.score_data,
+        )
+        st_folium(m, width=None, height=520, returned_objects=[])
 
-    if not st.session_state.scored:
-        st.info("Enter an address in the sidebar and click **Score this location**.")
+    with col_card:
+        st.subheader("Risk assessment")
 
-    else:
-        data = st.session_state.score_data
-        tier = data.get("risk_tier", "Unknown")
-
-        if tier == "Unknown":
-            st.warning(data.get("message", "No data available for this location."))
-            st.caption(f"H3 index: `{data.get('h3_index','')}`")
+        if not st.session_state.scored:
+            st.info("Enter an address in the sidebar and click **Score this location**.")
         else:
-            # Badge
-            st.markdown(risk_badge(tier), unsafe_allow_html=True)
-            st.write("")
+            data = st.session_state.score_data
+            tier = data.get("risk_tier", "Unknown")
 
-            # Metrics row
-            m1, m2 = st.columns(2)
-            m1.metric("Crashes per km²", f"{data.get('crash_density', 0):.1f}")
-            pct = data.get("percentile", 0)
-            m2.metric("Riskier than", f"{pct:.0f}% of zones")
+            if tier == "Unknown":
+                st.warning(data.get("message", "No data available for this location."))
+                st.caption(f"H3 index: `{data.get('h3_index','')}`")
+            else:
+                st.markdown(risk_badge(tier), unsafe_allow_html=True)
+                st.write("")
+                m1, m2 = st.columns(2)
+                m1.metric("Crashes per km²", f"{data.get('crash_density', 0):.1f}")
+                pct = data.get("percentile", 0)
+                m2.metric("Riskier than", f"{pct:.0f}% of zones")
+                st.caption("Top contributing risk factors (CLIP scores)")
+                top3   = data.get("top_risk_factors", [])
+                detail = st.session_state.hex_detail or data
+                if top3:
+                    fig = top_factors_chart(top3, detail)
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                lat = st.session_state.score_lat
+                lon = st.session_state.score_lon
+                if GOOGLE_API_KEY and lat and lon:
+                    sv_url = STREETVIEW_URL.format(lat=lat, lon=lon, key=GOOGLE_API_KEY)
+                    st.image(sv_url, caption="Street View at scored location", use_container_width=True)
+                st.info(RISK_EXPLANATION.get(tier, ""))
+                st.caption(f"H3 index: `{data.get('h3_index','')}`")
 
-            # Top risk factors chart
-            st.caption("Top contributing risk factors (CLIP scores)")
-            top3   = data.get("top_risk_factors", [])
-            detail = st.session_state.hex_detail or data
-            if top3:
-                fig = top_factors_chart(top3, detail)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+with tab_compare:
+    st.info("Compare tab — coming in Task 8.")
 
-            # Street View image
-            lat = st.session_state.score_lat
-            lon = st.session_state.score_lon
-            if GOOGLE_API_KEY and lat and lon:
-                sv_url = STREETVIEW_URL.format(lat=lat, lon=lon, key=GOOGLE_API_KEY)
-                st.image(sv_url, caption="Street View at scored location", use_container_width=True)
-
-            # Plain-English explanation
-            st.info(RISK_EXPLANATION.get(tier, ""))
-            st.caption(f"H3 index: `{data.get('h3_index','')}`")
+if IS_LOCAL:
+    with tab_label:
+        render_label_tab()
