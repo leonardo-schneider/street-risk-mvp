@@ -24,7 +24,7 @@ from streamlit_folium import st_folium
 load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env", override=True)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
-API_BASE       = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE       = os.getenv("API_BASE_URL", "https://street-risk-mvp.onrender.com")
 
 # ── constants ─────────────────────────────────────────────────────────────────
 SARASOTA_CENTER = (27.3364, -82.5307)
