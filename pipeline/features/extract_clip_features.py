@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 import boto3
+import joblib
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -70,6 +71,7 @@ CONCEPT_COLS = [
     "clip_parked_cars",
 ]
 
+DEVICE = "cpu"
 
 # ── S3 ────────────────────────────────────────────────────────────────────────
 
@@ -174,8 +176,6 @@ def probe_mode(dry_run: bool = False, batch_size: int = 32):
     → aggregate clip_risk_prob per hex → save Silver Parquet.
     Requires model/clip_probe.pkl to exist (run train_clip_probe.py first).
     """
-    import joblib
-
     if not PROBE_PATH.exists():
         raise FileNotFoundError(
             f"Probe not found: {PROBE_PATH}\n"
@@ -192,12 +192,12 @@ def probe_mode(dry_run: bool = False, batch_size: int = 32):
         print(f"  (--dry-run) Limited to {len(manifest)} images")
 
     # Load CLIP + S3
-    device = "cpu"
-    model, processor = load_clip(device)
+    model, processor = load_clip(DEVICE)
     s3 = make_s3_client()
 
     # Batch inference
     rows = []
+    n_skipped = 0
     n = len(manifest)
     with tqdm(total=n, desc="Probe inference", unit="img") as pbar:
         for start in range(0, n, batch_size):
@@ -210,12 +210,13 @@ def probe_mode(dry_run: bool = False, batch_size: int = 32):
                     meta.append(row)
                 except Exception as e:
                     tqdm.write(f"  [warn] {row['s3_key']}: {e}")
+                    n_skipped += 1
 
             if not images:
                 pbar.update(len(batch_meta))
                 continue
 
-            embs  = extract_embeddings_batch(images, model, processor, device)  # (N, 512)
+            embs  = extract_embeddings_batch(images, model, processor, DEVICE)  # (N, 512)
             probs = probe.predict_proba(embs)[:, 1]                              # P(high risk)
 
             for i, row in enumerate(meta):
@@ -231,7 +232,8 @@ def probe_mode(dry_run: bool = False, batch_size: int = 32):
                     .mean()
                     .reset_index()
     )
-    print(f"  [ok] {len(img_probe_df)} images scored → {len(hex_probe_df)} hexagons")
+    print(f"  [ok] {len(img_probe_df)} images scored → {len(hex_probe_df)} hexagons"
+          + (f"  ({n_skipped} skipped)" if n_skipped else ""))
 
     # Save
     save_parquet(hex_probe_df, PROBE_HEX_LOCAL)
@@ -262,9 +264,8 @@ def main(dry_run: bool = False, batch_size: int = 32):
 
     # 2. Load CLIP
     print("\nStep 2/5  Loading CLIP model ...")
-    device = "cpu"
-    model, processor = load_clip(device)
-    text_emb = encode_texts(model, processor, device)
+    model, processor = load_clip(DEVICE)
+    text_emb = encode_texts(model, processor, DEVICE)
     print(f"  [ok] Text embeddings computed for {len(RISK_CONCEPTS)} concepts")
 
     # 3. S3 client
@@ -292,7 +293,7 @@ def main(dry_run: bool = False, batch_size: int = 32):
                 pbar.update(len(batch_meta))
                 continue
 
-            scores = score_batch(images, model, processor, text_emb, device)
+            scores = score_batch(images, model, processor, text_emb, DEVICE)
 
             for i, row in enumerate(meta):
                 record = {
