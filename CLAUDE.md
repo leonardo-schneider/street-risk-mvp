@@ -77,5 +77,17 @@ RISK_CONCEPTS = [
 - Never split randomly — neighboring hexagons share visual features
 
 ## Current phase
-Phase 2 complete — repo structure and infrastructure initialized.
-Next: Phase 3 — road sampling pipeline (pipeline/ingestion/sample_roads.py)
+Phase 5 complete — Bronze layer fully populated:
+- 6,655 road points in S3 Bronze
+- 770 Street View images in S3 Bronze
+- 47,713 crash records in S3 Bronze
+- 937 crash hexagons aggregated in S3 Silver
+
+Next: Phase 6 — CLIP feature extraction
+File to implement: pipeline/features/extract_clip_features.py
+
+## Known data corrections
+- FDOT endpoint uses layer 2000, not layer 0
+- Crash coordinates use SAFETYLAT/SAFETYLON not LATITUDE/LONGITUDE
+- speed_limit and lanes are NaN for most residential streets — impute defaults in Silver layer
+- 98 road points had no Street View imagery available
