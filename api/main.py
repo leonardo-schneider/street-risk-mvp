@@ -39,6 +39,9 @@ from api.schemas import (
 # ── env ───────────────────────────────────────────────────────────────────────
 load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env", override=True)
 
+REGION      = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
+
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT           = Path(__file__).parents[1]
 GOLD_PATH      = ROOT / "data" / "gold" / "training_table" / "sarasota_gold.parquet"
@@ -85,25 +88,24 @@ def _s3_client():
 
 def _load_from_s3():
     """Load Gold table, model, and feature columns directly from S3 (production)."""
-    bucket = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
     s3 = _s3_client()
 
-    print(f"[startup] Loading from S3: s3://{bucket}/")
+    print(f"[startup] Loading from S3: s3://{BUCKET_NAME}/")
 
     buf = io.BytesIO()
-    s3.download_fileobj(bucket, S3_GOLD_KEY, buf)
+    s3.download_fileobj(BUCKET_NAME,S3_GOLD_KEY, buf)
     buf.seek(0)
     df = pd.read_parquet(buf)
     print(f"[startup] Gold table loaded from S3: {len(df)} hexagons")
 
     buf = io.BytesIO()
-    s3.download_fileobj(bucket, S3_MODEL_KEY, buf)
+    s3.download_fileobj(BUCKET_NAME,S3_MODEL_KEY, buf)
     buf.seek(0)
     model = joblib.load(buf)
     print(f"[startup] Model loaded from S3: {S3_MODEL_KEY}")
 
     buf = io.BytesIO()
-    s3.download_fileobj(bucket, S3_FEAT_KEY, buf)
+    s3.download_fileobj(BUCKET_NAME,S3_FEAT_KEY, buf)
     feat_cols = json.loads(buf.getvalue().decode("utf-8"))
     print(f"[startup] Feature columns loaded from S3: {len(feat_cols)} features")
 
