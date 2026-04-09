@@ -16,6 +16,7 @@ from pathlib import Path
 
 import boto3
 import folium
+import matplotlib.colors as mcolors
 import pandas as pd
 import plotly.graph_objects as go
 import requests
@@ -217,38 +218,47 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
     if geojson:
         for feature in geojson.get("features", []):
             props   = feature["properties"]
+            score   = props.get("risk_score_normalized", 0.0)
             tier    = props.get("risk_tier", "Low")
-            color   = TIER_COLORS.get(tier, "#cccccc")
             density = props.get("crash_density", 0)
             h3idx   = props.get("h3_index", "")
+            color   = risk_color(score)
 
             folium.GeoJson(
                 feature,
                 style_function=lambda f, c=color: {
                     "fillColor":   c,
-                    "color":       "#333333",
-                    "weight":      0.5,
-                    "fillOpacity": 0.55,
+                    "color":       "#222222",
+                    "weight":      0.4,
+                    "fillOpacity": 0.65,
+                },
+                highlight_function=lambda f: {
+                    "fillOpacity": 0.9,
+                    "weight":      2,
+                    "color":       "#ffffff",
                 },
                 tooltip=folium.Tooltip(
-                    f"<b>{tier} risk</b><br>Density: {density:.1f} crashes/km²<br>{h3idx}",
+                    f"<b>{tier} risk</b> &nbsp;|&nbsp; {score:.2f}<br>"
+                    f"Density: {density:.1f} crashes/km²<br>"
+                    f"<span style='font-size:11px;color:#888'>{h3idx}</span>",
                     sticky=False,
                 ),
             ).add_to(m)
 
-    # Legend
+    # Gradient legend
     legend_html = """
     <div style="position:fixed;bottom:30px;left:30px;z-index:1000;background:white;
-                padding:10px 14px;border-radius:8px;border:1px solid #ccc;font-size:13px;">
-        <b>Risk tier</b><br>
-        <span style="color:#d73027;">&#9632;</span> High<br>
-        <span style="color:#fee090;">&#9632;</span> Medium<br>
-        <span style="color:#1a9850;">&#9632;</span> Low
+                padding:10px 14px;border-radius:8px;border:1px solid #ccc;font-size:12px;">
+        <b>Risk score</b><br>
+        <div style="background:linear-gradient(to right,#1a9850,#fee090,#d73027);
+                    width:120px;height:12px;border-radius:3px;margin:4px 0;"></div>
+        <div style="display:flex;justify-content:space-between;width:120px;">
+            <span>Low</span><span>High</span>
+        </div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # Scored location marker
     if scored_lat is not None and scored_data and "risk_tier" in scored_data:
         tier    = scored_data.get("risk_tier", "Unknown")
         density = scored_data.get("crash_density", 0)
@@ -261,8 +271,10 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
         folium.Marker(
             location=[scored_lat, scored_lon],
             popup=folium.Popup(popup_html, max_width=200),
-            icon=folium.Icon(color="red" if tier == "High" else "orange" if tier == "Medium" else "green",
-                             icon="info-sign"),
+            icon=folium.Icon(
+                color="red" if tier == "High" else "orange" if tier == "Medium" else "green",
+                icon="info-sign",
+            ),
         ).add_to(m)
 
     return m
@@ -277,6 +289,14 @@ def risk_badge(tier: str) -> str:
         f'padding:8px 22px;border-radius:20px;font-size:1.3rem;font-weight:700;">'
         f'{TIER_EMOJI.get(tier,"")} {tier} Risk</div>'
     )
+
+
+def risk_color(score: float) -> str:
+    """Map a 0-1 risk score to a hex color on a green→yellow→red gradient."""
+    cmap = mcolors.LinearSegmentedColormap.from_list(
+        "risk", ["#1a9850", "#fee090", "#d73027"]
+    )
+    return mcolors.to_hex(cmap(max(0.0, min(1.0, float(score)))))
 
 
 def top_factors_chart(top_risk_factors: list, hex_data: dict) -> go.Figure:
