@@ -46,6 +46,15 @@ CLIP_LABEL = {
     "clip_parked_cars":   "Parked cars blocking view",
 }
 
+FEATURE_LABEL = {
+    **CLIP_LABEL,
+    "speed_limit_mean":           "Speed limit (mean)",
+    "lanes_mean":                 "Lane count (mean)",
+    "dist_to_intersection_mean":  "Distance to intersection",
+    "point_count":                "Road point density",
+    "clip_risk_prob":             "Visual risk (probe)",
+}
+
 RISK_EXPLANATION = {
     "High":    "This zone has significantly elevated crash activity — drive with extra caution.",
     "Medium":  "This zone has moderate crash risk, consistent with typical urban streets.",
@@ -322,6 +331,128 @@ def top_factors_chart(top_risk_factors: list, hex_data: dict) -> go.Figure:
     return fig
 
 
+def render_compare_tab():
+    st.subheader("Compare two locations")
+    st.caption("Score two addresses side-by-side and see what drives the risk difference.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        addr_a = st.text_input("Location A", value="1 N Tamiami Trail, Sarasota, FL", key="cmp_a")
+    with col_b:
+        addr_b = st.text_input("Location B", value="2100 Ringling Blvd, Sarasota, FL", key="cmp_b")
+
+    compare_btn = st.button("Compare", type="primary")
+
+    if not compare_btn:
+        st.info("Enter two addresses above and click **Compare**.")
+        return
+
+    # Geocode both addresses
+    coords_a = geocode_address(addr_a.strip()) if addr_a.strip() else None
+    coords_b = geocode_address(addr_b.strip()) if addr_b.strip() else None
+
+    if coords_a is None:
+        st.error(f"Could not geocode: '{addr_a}'")
+        return
+    if coords_b is None:
+        st.error(f"Could not geocode: '{addr_b}'")
+        return
+
+    # Score both
+    data_a = score_location(*coords_a)
+    data_b = score_location(*coords_b)
+
+    if "error" in data_a:
+        st.error(f"API error for Location A: {data_a['error']}")
+        return
+    if "error" in data_b:
+        st.error(f"API error for Location B: {data_b['error']}")
+        return
+
+    tier_a = data_a.get("risk_tier", "Unknown")
+    tier_b = data_b.get("risk_tier", "Unknown")
+
+    # Verdict banner
+    score_a = data_a.get("risk_score_normalized", 0)
+    score_b = data_b.get("risk_score_normalized", 0)
+    if tier_a != "Unknown" and tier_b != "Unknown":
+        if abs(score_a - score_b) < 0.05:
+            verdict = "Both locations have similar risk scores."
+        elif score_a > score_b:
+            pct_diff = round((score_a - score_b) / max(score_b, 0.001) * 100)
+            verdict  = f"Location A is **{pct_diff}% higher risk** than Location B."
+        else:
+            pct_diff = round((score_b - score_a) / max(score_a, 0.001) * 100)
+            verdict  = f"Location B is **{pct_diff}% higher risk** than Location A."
+        st.info(verdict)
+
+    st.divider()
+
+    col_left, col_right = st.columns(2)
+
+    for col, data, addr, coords, label in [
+        (col_left,  data_a, addr_a, coords_a, "A"),
+        (col_right, data_b, addr_b, coords_b, "B"),
+    ]:
+        tier = data.get("risk_tier", "Unknown")
+        with col:
+            st.markdown(f"**Location {label}** — {addr}")
+            st.markdown(risk_badge(tier), unsafe_allow_html=True)
+            st.write("")
+
+            if tier == "Unknown":
+                st.warning(data.get("message", "Outside coverage area."))
+                continue
+
+            m1, m2 = st.columns(2)
+            m1.metric("Crashes per km²", f"{data.get('crash_density', 0):.1f}")
+            m2.metric("Riskier than", f"{data.get('percentile', 0):.0f}% of zones")
+
+            shap_values = data.get("shap_values", {})
+            if shap_values:
+                st.caption("Feature contributions (SHAP)")
+                fig = shap_chart(shap_values, tier)
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            else:
+                st.caption("SHAP values not available (API may be loading).")
+
+            lat, lon = coords
+            if GOOGLE_API_KEY:
+                sv_url = STREETVIEW_URL.format(lat=lat, lon=lon, key=GOOGLE_API_KEY)
+                st.image(sv_url, caption="Street View", use_container_width=True)
+
+            st.caption(f"H3 index: `{data.get('h3_index', '')}`")
+
+
+def shap_chart(shap_values: dict, tier: str) -> go.Figure:
+    """Horizontal bar chart of SHAP values sorted by absolute magnitude."""
+    if not shap_values:
+        return go.Figure()
+
+    items  = sorted(shap_values.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
+    labels = [FEATURE_LABEL.get(k, k) for k, _ in items]
+    values = [v for _, v in items]
+    colors = ["#d73027" if v > 0 else "#1a9850" for v in values]
+
+    fig = go.Figure(go.Bar(
+        x=values,
+        y=labels,
+        orientation="h",
+        marker_color=colors,
+        text=[f"{v:+.2f}" for v in values],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        height=260,
+        margin=dict(l=0, r=50, t=10, b=10),
+        xaxis=dict(title="SHAP contribution", zeroline=True, zerolinecolor="#cccccc"),
+        yaxis=dict(autorange="reversed"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
 # ── main UI ───────────────────────────────────────────────────────────────────
 
 # Header
@@ -436,7 +567,7 @@ with tab_map:
                 st.caption(f"H3 index: `{data.get('h3_index','')}`")
 
 with tab_compare:
-    st.info("Compare tab — coming in Task 8.")
+    render_compare_tab()
 
 if IS_LOCAL:
     with tab_label:
