@@ -91,7 +91,6 @@ def fetch_stats():
         return None
 
 
-@st.cache_data(ttl=300)
 def fetch_map_data():
     try:
         r = requests.get(f"{API_BASE}/map-data", timeout=30)
@@ -228,10 +227,11 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
         for feature in geojson.get("features", []):
             props   = feature["properties"]
             score   = props.get("risk_score_normalized", 0.0)
+            pct     = props.get("percentile", score * 100) / 100
             tier    = props.get("risk_tier", "Low")
             density = props.get("crash_density", 0)
             h3idx   = props.get("h3_index", "")
-            color   = risk_color(score)
+            color   = risk_color(score, tier)
 
             folium.GeoJson(
                 feature,
@@ -300,12 +300,15 @@ def risk_badge(tier: str) -> str:
     )
 
 
-def risk_color(score: float) -> str:
-    """Map a 0-1 risk score to a hex color on a green→yellow→red gradient."""
+def risk_color(score: float, tier: str = "Medium") -> str:
+    """Map a 0-1 risk score to a hex color, constrained to the tier's color band."""
     cmap = mcolors.LinearSegmentedColormap.from_list(
         "risk", ["#1a9850", "#fee090", "#d73027"]
     )
-    return mcolors.to_hex(cmap(max(0.0, min(1.0, float(score)))))
+    tier_range = {"Low": (0.0, 0.38), "Medium": (0.38, 0.65), "High": (0.65, 1.0)}
+    lo, hi = tier_range.get(tier, (0.0, 1.0))
+    mapped = lo + float(score) * (hi - lo)
+    return mcolors.to_hex(cmap(max(0.0, min(1.0, mapped))))
 
 
 def top_factors_chart(top_risk_factors: list, hex_data: dict) -> go.Figure:
