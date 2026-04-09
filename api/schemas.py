@@ -35,6 +35,7 @@ class HexRiskResponse(BaseModel):
     clip_scores: Dict[str, float] = Field(..., description="Raw CLIP softmax scores for all 7 risk concepts")
     hex_center: HexCenter
     percentile: float = Field(..., description="Percentile of this hex vs all hexagons (0-100)")
+    shap_values: Dict[str, float] = Field(default_factory=dict, description="SHAP value per feature for this hexagon")
 
 
 class HexUnknownResponse(BaseModel):

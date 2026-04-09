@@ -23,6 +23,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from model.predict import build_feature_matrix, compute_shap_values
+
 from api.schemas import (
     GeoJSONFeature,
     GeoJSONFeatureCollection,
@@ -142,6 +144,17 @@ def startup():
     # Precompute percentile rank for each hex
     df["percentile"] = df["crash_density"].rank(pct=True) * 100
 
+    # Precompute SHAP values for all hexagons
+    try:
+        X_all   = build_feature_matrix(df.reset_index(drop=True), feat_cols)
+        shap_df = compute_shap_values(model, X_all)
+        shap_df.index = df["h3_index"].values if "h3_index" in df.columns else df.index
+        _state["shap_df"] = shap_df
+        print(f"[startup] SHAP values computed for {len(shap_df)} hexagons")
+    except Exception as e:
+        print(f"[startup] SHAP computation failed (non-fatal): {e}")
+        _state["shap_df"] = None
+
     # Index by h3_index for O(1) lookups
     _state["df"]         = df.set_index("h3_index")
     _state["model"]      = model
@@ -155,9 +168,16 @@ def startup():
 
 def _row_to_hex_response(h3_index: str, row: pd.Series) -> HexRiskResponse:
     """Convert a Gold table row into a HexRiskResponse."""
-    clip_scores = {col: round(float(row[col]), 6) for col in CLIP_COLS}
+    clip_scores = {col: round(float(row[col]), 6) for col in CLIP_COLS if col in row.index}
     top_risk_factors = sorted(clip_scores, key=clip_scores.get, reverse=True)[:3]
     lat, lon = h3.cell_to_latlng(h3_index)
+
+    shap_df = _state.get("shap_df")
+    if shap_df is not None and h3_index in shap_df.index:
+        shap_values = {col: round(float(shap_df.at[h3_index, col]), 6) for col in shap_df.columns}
+    else:
+        shap_values = {}
+
     return HexRiskResponse(
         h3_index=h3_index,
         crash_density=round(float(row["crash_density"]), 4),
@@ -167,6 +187,7 @@ def _row_to_hex_response(h3_index: str, row: pd.Series) -> HexRiskResponse:
         clip_scores=clip_scores,
         hex_center=HexCenter(lat=round(lat, 6), lon=round(lon, 6)),
         percentile=round(float(row["percentile"]), 2),
+        shap_values=shap_values,
     )
 
 
