@@ -209,6 +209,19 @@ Gold    (S3: street-risk-mvp/gold/)
 
 ---
 
+## Experiments
+
+### Linear Probe vs Zero-Shot CLIP
+Trained a logistic regression probe on 104 manually labeled 
+Street View images (AUC 0.836). Despite strong image-level 
+classification, collapsing 7 zero-shot dimensions into a single 
+probability reduced Spearman from 0.666 to 0.492. The 
+7-dimensional zero-shot representation preserves structure 
+that gradient boosting exploits more effectively than a 
+compressed scalar.
+
+---
+
 ## Run Locally
 
 ```bash

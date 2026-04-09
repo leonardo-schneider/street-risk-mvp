@@ -280,6 +280,7 @@ def map_data():
                 "crash_density":        round(float(row["crash_density"]), 4),
                 "risk_tier":            row["risk_tier"],
                 "risk_score_normalized": round(float(row["risk_score_normalized"]), 6),
+                "percentile":           round(float(row["percentile"]), 2),
             },
         ))
 
