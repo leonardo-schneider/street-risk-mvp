@@ -1,13 +1,15 @@
 """
 pipeline/ingestion/fetch_crash_data.py
 
-Downloads Sarasota County crash records from the FDOT Open Data Hub
-ArcGIS REST endpoint, assigns H3 res-9 indices, aggregates to hexagon
+Downloads crash records from the FDOT Open Data Hub ArcGIS REST endpoint
+for a given city/county, assigns H3 res-9 indices, aggregates to hexagon
 level, and writes Bronze + Silver Parquet files to local disk and S3.
 
 Usage:
-    python pipeline/ingestion/fetch_crash_data.py            # full run
-    python pipeline/ingestion/fetch_crash_data.py --dry-run  # first page only
+    python pipeline/ingestion/fetch_crash_data.py                      # sarasota full
+    python pipeline/ingestion/fetch_crash_data.py --dry-run            # first page only
+    python pipeline/ingestion/fetch_crash_data.py --city tampa         # tampa full
+    python pipeline/ingestion/fetch_crash_data.py --city tampa --dry-run
 """
 
 import argparse
@@ -31,21 +33,18 @@ load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env", override=True)
 BUCKET = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
 REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
-# ── paths ─────────────────────────────────────────────────────────────────────
-RAW_LOCAL  = Path(__file__).parents[2] / "data" / "bronze" / "crash" / "sarasota_crashes_raw.parquet"
-HEX_LOCAL  = Path(__file__).parents[2] / "data" / "silver" / "crash_hex" / "sarasota_crash_hex.parquet"
-RAW_S3KEY  = "bronze/crash/sarasota_crashes_raw.parquet"
-HEX_S3KEY  = "silver/crash_hex/sarasota_crash_hex.parquet"
+# ── city → county mapping ─────────────────────────────────────────────────────
+CITY_COUNTY = {
+    "sarasota": "SARASOTA",
+    "tampa":    "HILLSBOROUGH",
+}
 
 # ── FDOT endpoint ─────────────────────────────────────────────────────────────
-FDOT_URL   = "https://gis.fdot.gov/arcgis/rest/services/sso/ssogis/MapServer/2000/query"
-PAGE_SIZE  = 5000
-H3_RES     = 9
-HEX_AREA   = 0.1059   # km2, H3 res-9 average area
+FDOT_URL  = "https://gis.fdot.gov/arcgis/rest/services/sso/ssogis/MapServer/2000/query"
+PAGE_SIZE = 5000
+H3_RES    = 9
+HEX_AREA  = 0.1059   # km², H3 res-9 average area
 
-# Actual field names as returned by layer 2000.
-# SAFETYLAT/SAFETYLON are the geocoded coordinates; LATITUDE/LONGITUDE are
-# officer-reported and are often 0 — use SAFETY* instead.
 FIELDS = [
     "SAFETYLAT", "SAFETYLON", "CALENDAR_YEAR", "CRASH_DATE",
     "IMPCT_TYP_CD", "INJSEVER", "COUNTY_TXT",
@@ -55,12 +54,12 @@ FIELDS = [
 
 # ── fetch ─────────────────────────────────────────────────────────────────────
 
-def fetch_page(offset: int, dry_run: bool = False) -> list:
+def fetch_page(county: str, offset: int) -> tuple:
     params = {
-        "where":        "COUNTY_TXT='SARASOTA'",
-        "outFields":    ",".join(FIELDS),
-        "f":            "json",
-        "resultOffset": offset,
+        "where":             f"COUNTY_TXT='{county}'",
+        "outFields":         ",".join(FIELDS),
+        "f":                 "json",
+        "resultOffset":      offset,
         "resultRecordCount": PAGE_SIZE,
     }
     resp = requests.get(FDOT_URL, params=params, timeout=60)
@@ -71,19 +70,18 @@ def fetch_page(offset: int, dry_run: bool = False) -> list:
         raise RuntimeError(f"FDOT API error: {data['error']}")
 
     features = data.get("features", [])
-    records = [feat["attributes"] for feat in features]
-
+    records  = [feat["attributes"] for feat in features]
     exceeded = data.get("exceededTransferLimit", False)
     return records, exceeded
 
 
-def download_all(dry_run: bool = False) -> pd.DataFrame:
+def download_all(county: str, dry_run: bool = False) -> pd.DataFrame:
     all_records = []
     offset = 0
 
-    with tqdm(desc="Downloading crash pages", unit="page") as pbar:
+    with tqdm(desc=f"Downloading crash pages ({county})", unit="page") as pbar:
         while True:
-            records, exceeded = fetch_page(offset, dry_run)
+            records, exceeded = fetch_page(county, offset)
             all_records.extend(records)
             pbar.update(1)
             pbar.set_postfix(total=len(all_records))
@@ -92,17 +90,14 @@ def download_all(dry_run: bool = False) -> pd.DataFrame:
                 break
             offset += PAGE_SIZE
 
-    df = pd.DataFrame(all_records)
-    return df
+    return pd.DataFrame(all_records)
 
 
 # ── transform ─────────────────────────────────────────────────────────────────
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
-    # Normalise column names to lower-case
     df.columns = [c.upper() for c in df.columns]
 
-    # Keep only rows with valid geocoded coordinates
     df = df.dropna(subset=["SAFETYLAT", "SAFETYLON"])
     df = df[
         (df["SAFETYLAT"] != 0) & (df["SAFETYLON"] != 0) &
@@ -125,8 +120,6 @@ def assign_h3(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_hex(df: pd.DataFrame) -> pd.DataFrame:
-    # INJSEVER: numeric code where 1=fatal, 2=serious, 3=minor, 4=possible, 5=none
-    # Treat severity 5 (no injury) as uninjured; everything else counts
     df["injured"] = df["INJSEVER"].fillna(5).apply(lambda v: 0 if int(v) == 5 else 1)
 
     agg = (
@@ -165,8 +158,7 @@ def s3_key_exists(client, bucket, key):
 
 def save_parquet(df: pd.DataFrame, local_path: Path, s3_key: str, dry_run: bool, client):
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    pq.write_table(table, local_path)
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), local_path)
     print(f"  [ok] Saved locally: {local_path}")
 
     if dry_run:
@@ -174,7 +166,7 @@ def save_parquet(df: pd.DataFrame, local_path: Path, s3_key: str, dry_run: bool,
         return
 
     if s3_key_exists(client, BUCKET, s3_key):
-        print(f"  [ok] S3 key already exists, overwriting: s3://{BUCKET}/{s3_key}")
+        print(f"  [overwrite] s3://{BUCKET}/{s3_key}")
 
     client.upload_file(str(local_path), BUCKET, s3_key)
     print(f"  [ok] Uploaded: s3://{BUCKET}/{s3_key}")
@@ -182,12 +174,20 @@ def save_parquet(df: pd.DataFrame, local_path: Path, s3_key: str, dry_run: bool,
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main(dry_run: bool = False):
-    print("\n- Crash data ingestion - Sarasota County -\n")
+def main(city: str = "sarasota", dry_run: bool = False):
+    county = CITY_COUNTY[city]
+    data_root = Path(__file__).parents[2] / "data"
+
+    raw_local = data_root / "bronze" / "crash" / f"{city}_crashes_raw.parquet"
+    hex_local = data_root / "silver" / "crash_hex" / f"{city}_crash_hex.parquet"
+    raw_s3key = f"bronze/crash/{city}_crashes_raw.parquet"
+    hex_s3key = f"silver/crash_hex/{city}_crash_hex.parquet"
+
+    print(f"\n- Crash data ingestion — {city.upper()} (county: {county}) -\n")
 
     # 1. Download
     print("Step 1/5  Downloading crash records from FDOT ...")
-    raw_df = download_all(dry_run=dry_run)
+    raw_df = download_all(county, dry_run=dry_run)
     print(f"  [ok] {len(raw_df):,} raw records downloaded")
 
     # 2. Clean
@@ -209,33 +209,40 @@ def main(dry_run: bool = False):
     # 5. Save
     print("\nStep 5/5  Saving ...")
     client = s3_client()
-    save_parquet(df, RAW_LOCAL, RAW_S3KEY, dry_run, client)
-    save_parquet(hex_df, HEX_LOCAL, HEX_S3KEY, dry_run, client)
+    save_parquet(df, raw_local, raw_s3key, dry_run, client)
+    save_parquet(hex_df, hex_local, hex_s3key, dry_run, client)
 
-    # Summary
     print("\n--- Summary ---")
+    print(f"  City                   : {city}")
+    print(f"  County                 : {county}")
     print(f"  Total crashes          : {len(df):,}")
     print(f"  Hexagons with crashes  : {n_hexes:,}")
     print(f"  crash_density (crashes/km2):")
     print(f"    min  = {hex_df['crash_density'].min():.2f}")
     print(f"    mean = {hex_df['crash_density'].mean():.2f}")
     print(f"    max  = {hex_df['crash_density'].max():.2f}")
-    print(f"\n  Hex aggregates preview:")
+    print(f"\n  Hex aggregates preview (top 10 by density):")
     print(hex_df.sort_values("crash_density", ascending=False).head(10).to_string(index=False))
     print()
 
-    print(f"- Done. -\n")
+    print("- Done. -\n")
     return df, hex_df
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Download and aggregate Sarasota crash data from FDOT."
+        description="Download and aggregate crash data from FDOT."
+    )
+    parser.add_argument(
+        "--city",
+        choices=["sarasota", "tampa"],
+        default="sarasota",
+        help="City to download crash data for (default: sarasota).",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Download first page only (up to 5000 records), skip S3 upload.",
+        help="Download first page only (~5000 records), skip S3 upload.",
     )
     args = parser.parse_args()
-    main(dry_run=args.dry_run)
+    main(city=args.city, dry_run=args.dry_run)

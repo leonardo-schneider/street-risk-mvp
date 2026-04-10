@@ -1,13 +1,14 @@
 """
 pipeline/ingestion/sample_roads.py
 
-Downloads the Sarasota, FL road network via OSMnx, samples ~1500 points
-along roads, extracts tabular features for each point, saves to local
-data/bronze/ and uploads to S3 bronze/roads/.
+Downloads a city road network via OSMnx, samples ~1500 points along roads,
+extracts tabular features, saves to local data/bronze/ and uploads to S3.
 
 Usage:
-    python pipeline/ingestion/sample_roads.py            # full run
-    python pipeline/ingestion/sample_roads.py --dry-run  # skip S3 upload
+    python pipeline/ingestion/sample_roads.py                      # sarasota full
+    python pipeline/ingestion/sample_roads.py --dry-run            # sarasota, skip S3
+    python pipeline/ingestion/sample_roads.py --city tampa         # tampa full
+    python pipeline/ingestion/sample_roads.py --city tampa --dry-run
 """
 
 import argparse
@@ -28,17 +29,20 @@ from tqdm import tqdm
 # ── env ───────────────────────────────────────────────────────────────────────
 load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env", override=True)
 
-BUCKET     = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
-REGION     = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
-S3_KEY     = "bronze/roads/sarasota_road_points.parquet"
-LOCAL_PATH = Path(__file__).parents[2] / "data" / "bronze" / "sarasota_road_points.parquet"
+BUCKET = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
+REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+# ── city config ───────────────────────────────────────────────────────────────
+CITY_CONFIG = {
+    "sarasota": {"place": "Sarasota, Florida, USA"},
+    "tampa":    {"place": "Tampa, Florida, USA"},
+}
 
 TARGET_POINTS = 1500
-PLACE         = "Sarasota, Florida, USA"
 H3_RES        = 9
 NETWORK_TYPE  = "drive"
 
-DEFAULT_SPEED = 35   # mph, typical urban US default
+DEFAULT_SPEED = 35
 DEFAULT_LANES = 1
 
 
@@ -49,18 +53,14 @@ def _scalar(val, default):
     if isinstance(val, list):
         val = val[0]
     try:
-        return float(str(val).split()[0])  # handles "35 mph" -> 35.0
+        return float(str(val).split()[0])
     except (ValueError, TypeError):
         return float(default)
 
 
 def sample_points_on_edges(G, n_points):
-    """
-    Interpolate points along every edge proportional to edge length,
-    returning ~n_points dicts with lat/lon and edge attributes.
-    """
     edges = ox.graph_to_gdfs(G, nodes=False)
-    total_length = edges["length"].sum()
+    total_length    = edges["length"].sum()
     points_per_meter = n_points / total_length
 
     records = []
@@ -92,13 +92,8 @@ def add_h3_index(df):
 
 
 def add_distance_to_intersection(G, df):
-    """
-    For each sampled point find the nearest graph node and compute
-    Euclidean distance in metres using a flat-earth approximation
-    (accurate enough within a single city).
-    """
-    nodes_gdf = ox.graph_to_gdfs(G, edges=False)[["x", "y"]]
-    node_coords = nodes_gdf[["x", "y"]].values  # columns: lon, lat
+    nodes_gdf  = ox.graph_to_gdfs(G, edges=False)[["x", "y"]]
+    node_coords = nodes_gdf[["x", "y"]].values
 
     lons = df["lon"].values
     lats = df["lat"].values
@@ -119,7 +114,6 @@ def add_distance_to_intersection(G, df):
 
 
 def normalize_road_type(df):
-    """Flatten list-valued highway tags to a single string."""
     def _flatten(val):
         if isinstance(val, list):
             return val[0]
@@ -148,27 +142,30 @@ def upload_to_s3(local_path, bucket, key):
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     )
-
     if s3_key_exists(client, bucket, key):
-        print(f"  [ok] S3 key already exists, skipping upload: s3://{bucket}/{key}")
-        return
-
-    print(f"  Uploading to s3://{bucket}/{key} ...")
+        print(f"  [overwrite] s3://{bucket}/{key}")
     client.upload_file(str(local_path), bucket, key)
-    print(f"  [ok] Upload complete.")
+    print(f"  [ok] Uploaded: s3://{bucket}/{key}")
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main(dry_run=False):
-    print(f"\n- Road sampling - {PLACE} -\n")
+def main(city: str = "sarasota", dry_run: bool = False):
+    cfg   = CITY_CONFIG[city]
+    place = cfg["place"]
+
+    data_root   = Path(__file__).parents[2] / "data"
+    local_path  = data_root / "bronze" / f"{city}_road_points.parquet"
+    s3_key      = f"bronze/roads/{city}_road_points.parquet"
+
+    print(f"\n- Road sampling — {place} -\n")
 
     # 1. Download road network
     print("Step 1/5  Downloading OSM road network ...")
-    G = ox.graph_from_place(PLACE, network_type=NETWORK_TYPE)
+    G = ox.graph_from_place(place, network_type=NETWORK_TYPE)
     print(f"  [ok] Graph loaded: {len(G.nodes):,} nodes, {len(G.edges):,} edges")
 
-    # 2. Sample points along edges
+    # 2. Sample points
     print(f"\nStep 2/5  Sampling ~{TARGET_POINTS} points along edges ...")
     records = sample_points_on_edges(G, TARGET_POINTS)
     df = pd.DataFrame(records)
@@ -183,7 +180,7 @@ def main(dry_run=False):
     print("\nStep 4/5  Computing distance to nearest intersection ...")
     df = add_distance_to_intersection(G, df)
 
-    # 5. Finalize
+    # 5. Finalize & save
     df = normalize_road_type(df)
     df = df[[
         "lat", "lon", "h3_index",
@@ -196,29 +193,32 @@ def main(dry_run=False):
     print(f"\n  Preview:\n{df.head(3).to_string(index=False)}\n")
     print(f"  Shape: {df.shape}")
 
-    # 6. Save locally
     print(f"\nStep 5/5  Saving ...")
-    LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    pq.write_table(table, LOCAL_PATH)
-    print(f"  [ok] Saved locally: {LOCAL_PATH}")
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), local_path)
+    print(f"  [ok] Saved locally: {local_path}")
 
-    # 7. Upload to S3
     if dry_run:
         print("  (--dry-run) Skipping S3 upload.")
     else:
-        upload_to_s3(LOCAL_PATH, BUCKET, S3_KEY)
+        upload_to_s3(local_path, BUCKET, s3_key)
 
     print(f"\n- Done. {len(df):,} road points ready. -\n")
     return df
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sample Sarasota road points from OSM.")
+    parser = argparse.ArgumentParser(description="Sample road points from OSM.")
+    parser.add_argument(
+        "--city",
+        choices=["sarasota", "tampa"],
+        default="sarasota",
+        help="City to sample (default: sarasota).",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Skip S3 upload (local save only).",
     )
     args = parser.parse_args()
-    main(dry_run=args.dry_run)
+    main(city=args.city, dry_run=args.dry_run)

@@ -1,18 +1,27 @@
 """
 pipeline/ingestion/fetch_images.py
 
-Reads data/bronze/sarasota_road_points.parquet, selects 2 representative
-points per H3 hexagon (closest to centroid), fetches 2 Street View images
-per point (headings 0 and 90), caches them in S3 bronze/images/, and
-writes a local manifest CSV.
+Reads road points for a given city, selects 2 representative points per H3
+hexagon, fetches Street View images, caches in S3, and writes a city-specific
+manifest CSV.
+
+Headings per city:
+  - sarasota: [180, 270] only — headings 0 & 90 already exist in S3
+  - tampa:    [0, 90, 180, 270] — all 4 headings
+
+S3 key scheme:
+  - Sarasota headings 0/90: bronze/images/{h3_index}_{heading}.jpg  (legacy, already exist)
+  - Sarasota headings 180/270: bronze/images/sarasota/{h3_index}_{heading}.jpg
+  - Tampa all headings:        bronze/images/tampa/{h3_index}_{heading}.jpg
 
 Usage:
-    python pipeline/ingestion/fetch_images.py            # full run
-    python pipeline/ingestion/fetch_images.py --dry-run  # 5 hexagons only
+    python pipeline/ingestion/fetch_images.py                              # sarasota full
+    python pipeline/ingestion/fetch_images.py --dry-run                    # sarasota 5 hexes
+    python pipeline/ingestion/fetch_images.py --city tampa --limit 414     # tampa urban core
+    python pipeline/ingestion/fetch_images.py --city tampa --limit 414 --dry-run
 """
 
 import argparse
-import io
 import os
 import time
 from datetime import datetime, timezone
@@ -35,33 +44,50 @@ BUCKET         = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
 REGION         = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
 # ── constants ─────────────────────────────────────────────────────────────────
-LOCAL_POINTS   = Path(__file__).parents[2] / "data" / "bronze" / "sarasota_road_points.parquet"
-MANIFEST_PATH  = Path(__file__).parents[2] / "data" / "bronze" / "image_manifest.csv"
+DATA_ROOT      = Path(__file__).parents[2] / "data"
 
-HEADINGS       = [0, 90]
+# Headings per city — sarasota 0/90 already exist in S3
+CITY_HEADINGS = {
+    "sarasota": [180, 270],
+    "tampa":    [0, 90, 180, 270],
+}
+
+# Tampa city center (used for geographic clustering when --limit is set)
+CITY_CENTER = {
+    "sarasota": (27.3364, -82.5307),
+    "tampa":    (27.9506, -82.4572),
+}
+
 IMG_SIZE       = "640x640"
 FOV            = 90
 PITCH          = 0
-POINTS_PER_HEX = 2          # representative points per hexagon
-RATE_LIMIT_RPS = 5           # requests per second
-COST_PER_IMAGE = 0.007       # USD, Street View Static API standard tier
+POINTS_PER_HEX = 2
+RATE_LIMIT_RPS = 5
+COST_PER_IMAGE = 0.007
 STREETVIEW_URL = "https://maps.googleapis.com/maps/api/streetview"
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── S3 key scheme ─────────────────────────────────────────────────────────────
+
+def s3_key_for(city: str, h3_index: str, heading: int) -> str:
+    """
+    Sarasota headings 0/90 use the legacy path so existing cached images
+    are found correctly. All new images include the city prefix.
+    """
+    if city == "sarasota" and heading in (0, 90):
+        return f"bronze/images/{h3_index}_{heading}.jpg"
+    return f"bronze/images/{city}/{h3_index}_{heading}.jpg"
+
+
+# ── hex selection helpers ─────────────────────────────────────────────────────
 
 def hex_centroid(h3_index: str) -> tuple:
-    """Return (lat, lon) of the H3 cell centre."""
-    lat, lon = h3.cell_to_latlng(h3_index)
-    return lat, lon
+    return h3.cell_to_latlng(h3_index)
 
 
 def two_closest_to_centroid(group: pd.DataFrame) -> pd.DataFrame:
-    """
-    Given all road points in one hexagon, return the POINTS_PER_HEX rows
-    whose (lat, lon) is closest to the hexagon centroid.
-    """
-    h3_index = group["h3_index"].iloc[0]
+    """Return the POINTS_PER_HEX road points closest to the hexagon centroid."""
+    h3_index   = group["h3_index"].iloc[0]
     clat, clon = hex_centroid(h3_index)
 
     m_per_deg_lat = 111_320
@@ -71,13 +97,30 @@ def two_closest_to_centroid(group: pd.DataFrame) -> pd.DataFrame:
     dlon = (group["lon"].values - clon) * m_per_deg_lon
     dist = np.sqrt(dlat**2 + dlon**2)
 
-    idx = np.argsort(dist)[:POINTS_PER_HEX]
-    return group.iloc[idx]
+    return group.iloc[np.argsort(dist)[:POINTS_PER_HEX]]
 
 
-def s3_key_for(h3_index: str, heading: int) -> str:
-    return f"bronze/images/{h3_index}_{heading}.jpg"
+def select_hexes_by_proximity(all_hexes: list, city_center: tuple, limit: int) -> list:
+    """
+    Sort hexagons by distance from city_center (flat-earth), return the
+    `limit` closest hex indices.
+    """
+    clat, clon = city_center
+    m_per_deg_lat = 111_320
+    m_per_deg_lon = 111_320 * np.cos(np.radians(clat))
 
+    records = []
+    for h in all_hexes:
+        hlat, hlon = hex_centroid(h)
+        dlat = (hlat - clat) * m_per_deg_lat
+        dlon = (hlon - clon) * m_per_deg_lon
+        records.append((h, np.sqrt(dlat**2 + dlon**2)))
+
+    records.sort(key=lambda x: x[1])
+    return [h for h, _ in records[:limit]]
+
+
+# ── S3 helpers ────────────────────────────────────────────────────────────────
 
 def s3_key_exists(client, bucket: str, key: str) -> bool:
     try:
@@ -90,33 +133,20 @@ def s3_key_exists(client, bucket: str, key: str) -> bool:
 
 
 def fetch_streetview_bytes(lat: float, lon: float, heading: int):
-    """
-    Fetch a Street View image and return raw JPEG bytes, or None on failure.
-    Returns None (not an error) when Street View has no imagery at the location.
-    """
     params = {
-        "size":    IMG_SIZE,
-        "location": f"{lat},{lon}",
-        "heading": heading,
-        "fov":     FOV,
-        "pitch":   PITCH,
-        "key":     GOOGLE_API_KEY,
+        "size":              IMG_SIZE,
+        "location":          f"{lat},{lon}",
+        "heading":           heading,
+        "fov":               FOV,
+        "pitch":             PITCH,
+        "key":               GOOGLE_API_KEY,
         "return_error_code": "true",
     }
     resp = requests.get(STREETVIEW_URL, params=params, timeout=15)
-    if resp.status_code == 200:
-        return resp.content
-    return None
+    return resp.content if resp.status_code == 200 else None
 
 
-def build_manifest_row(
-    h3_index: str,
-    lat: float,
-    lon: float,
-    heading: int,
-    s3_key: str,
-    status: str,
-) -> dict:
+def build_manifest_row(h3_index, lat, lon, heading, s3_key, status) -> dict:
     return {
         "h3_index":   h3_index,
         "lat":        lat,
@@ -130,26 +160,55 @@ def build_manifest_row(
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main(dry_run: bool = False):
-    print("\n- Street View image fetcher -\n")
+def main(city: str = "sarasota", dry_run: bool = False, limit: int = None):
+    headings = CITY_HEADINGS[city]
+    print(f"\n- Street View image fetcher — {city.upper()} -")
+    print(f"  Headings: {headings}")
+    if limit:
+        print(f"  Hex limit: {limit} closest to city center {CITY_CENTER[city]}")
+    print()
 
     if not GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_MAPS_API_KEY is not set in .env")
 
+    points_path     = DATA_ROOT / "bronze" / f"{city}_road_points.parquet"
+    manifest_path   = DATA_ROOT / "bronze" / f"image_manifest_{city}.csv"
+    legacy_manifest = DATA_ROOT / "bronze" / "image_manifest.csv" if city == "sarasota" else None
+
     # 1. Load road points
     print("Step 1/4  Loading road points ...")
-    df = pd.read_parquet(LOCAL_POINTS)
-    print(f"  [ok] {len(df):,} points across {df['h3_index'].nunique():,} hexagons loaded")
+    if not points_path.exists():
+        raise FileNotFoundError(
+            f"Road points not found: {points_path}\n"
+            f"Run `python pipeline/ingestion/sample_roads.py --city {city}` first."
+        )
+    df = pd.read_parquet(points_path)
+    print(f"  [ok] {len(df):,} points across {df['h3_index'].nunique():,} hexagons")
 
-    # 2. Deduplicate: 2 closest-to-centroid points per hex
+    # 2. Representative points per hex
     print("\nStep 2/4  Selecting representative points per hexagon ...")
     rep = (
         df.groupby("h3_index", group_keys=False)
           .apply(two_closest_to_centroid)
           .reset_index(drop=True)
     )
-    n_hexes = rep["h3_index"].nunique()
-    print(f"  [ok] {len(rep):,} representative points across {n_hexes:,} hexagons")
+    n_hexes_total = rep["h3_index"].nunique()
+    print(f"  [ok] {len(rep):,} representative points across {n_hexes_total:,} hexagons")
+
+    # Geographic clustering: pick `limit` hexes closest to city center
+    if limit and limit < n_hexes_total:
+        all_hexes    = rep["h3_index"].unique().tolist()
+        selected     = select_hexes_by_proximity(all_hexes, CITY_CENTER[city], limit)
+        rep          = rep[rep["h3_index"].isin(selected)].copy()
+        n_selected   = rep["h3_index"].nunique()
+
+        # Bounding box of selected hexagons
+        lats = [hex_centroid(h)[0] for h in selected]
+        lons = [hex_centroid(h)[1] for h in selected]
+        print(f"  [ok] Limited to {n_selected} closest hexagons to city center")
+        print(f"  Bounding box of selected {n_selected} hexagons:")
+        print(f"    lat {min(lats):.4f} to {max(lats):.4f}")
+        print(f"    lon {min(lons):.4f} to {max(lons):.4f}")
 
     if dry_run:
         hex_sample = rep["h3_index"].unique()[:5]
@@ -157,7 +216,7 @@ def main(dry_run: bool = False):
         print(f"  (--dry-run) Limited to {rep['h3_index'].nunique()} hexagons "
               f"({len(rep)} points)")
 
-    # 3. Set up S3 client
+    # 3. S3 client
     s3 = boto3.client(
         "s3",
         region_name=REGION,
@@ -166,39 +225,32 @@ def main(dry_run: bool = False):
     )
 
     # 4. Fetch & upload
-    total_images = len(rep) * len(HEADINGS)
+    total_images   = len(rep) * len(headings)
     estimated_cost = total_images * COST_PER_IMAGE
     print(f"\nStep 3/4  Fetching images ...")
-    print(f"  Points: {len(rep)}  |  Headings: {HEADINGS}  |  "
+    print(f"  Points: {len(rep)}  |  Headings: {headings}  |  "
           f"Total requests: {total_images}  |  "
           f"Estimated API cost: ${estimated_cost:.2f}")
 
-    manifest_rows = []
+    manifest_rows  = []
     fetched = skipped = failed = 0
     cost_remaining = estimated_cost
-    min_interval = 1.0 / RATE_LIMIT_RPS
+    min_interval   = 1.0 / RATE_LIMIT_RPS
 
-    progress = tqdm(
-        total=total_images,
-        desc="Images",
-        unit="img",
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
-                   "[cost remaining: ${{postfix}}]",
-    )
+    progress = tqdm(total=total_images, desc="Images", unit="img")
 
     for _, row in rep.iterrows():
         h3_index = row["h3_index"]
         lat      = row["lat"]
         lon      = row["lon"]
 
-        for heading in HEADINGS:
-            key = s3_key_for(h3_index, heading)
+        for heading in headings:
+            key = s3_key_for(city, h3_index, heading)
             t0  = time.monotonic()
 
             if s3_key_exists(s3, BUCKET, key):
                 status = "cached"
                 skipped += 1
-                cost_remaining -= COST_PER_IMAGE
             else:
                 img_bytes = fetch_streetview_bytes(lat, lon, heading)
                 if img_bytes:
@@ -213,48 +265,77 @@ def main(dry_run: bool = False):
                 else:
                     status = "no_imagery"
                     failed += 1
-                cost_remaining -= COST_PER_IMAGE
 
-                # rate limiting
                 elapsed = time.monotonic() - t0
                 if elapsed < min_interval:
                     time.sleep(min_interval - elapsed)
 
+            cost_remaining -= COST_PER_IMAGE
             manifest_rows.append(
                 build_manifest_row(h3_index, lat, lon, heading, key, status)
             )
-            progress.set_postfix_str(f"{cost_remaining:.3f}")
+            progress.set_postfix(cached=skipped, fetched=fetched, failed=failed)
             progress.update(1)
 
     progress.close()
     print(f"\n  [ok] Fetched: {fetched}  |  Cached/skipped: {skipped}  |  "
           f"No imagery: {failed}")
+    actual_cost = fetched * COST_PER_IMAGE
+    print(f"  Actual API cost this run: ${actual_cost:.2f}")
 
     # 5. Save manifest
     print("\nStep 4/4  Saving manifest ...")
-    manifest = pd.DataFrame(manifest_rows)
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    new_manifest = pd.DataFrame(manifest_rows)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Append to existing manifest if present
-    if MANIFEST_PATH.exists():
-        existing = pd.read_csv(MANIFEST_PATH)
-        manifest = (
-            pd.concat([existing, manifest])
+    if manifest_path.exists():
+        existing = pd.read_csv(manifest_path)
+        new_manifest = (
+            pd.concat([existing, new_manifest])
               .drop_duplicates(subset=["h3_index", "heading"], keep="last")
               .reset_index(drop=True)
         )
 
-    manifest.to_csv(MANIFEST_PATH, index=False)
-    print(f"  [ok] Manifest saved: {MANIFEST_PATH}  ({len(manifest)} rows)")
-    print(f"\n  Preview:\n{manifest.head(10).to_string(index=False)}\n")
+    new_manifest.to_csv(manifest_path, index=False)
+    print(f"  [ok] Manifest saved: {manifest_path}  ({len(new_manifest)} rows)")
 
-    print(f"- Done. {fetched} new images uploaded to s3://{BUCKET}/bronze/images/ -\n")
-    return manifest
+    # Sarasota backward compat: keep legacy image_manifest.csv in sync
+    if legacy_manifest is not None:
+        if legacy_manifest.exists():
+            legacy_existing = pd.read_csv(legacy_manifest)
+            combined = (
+                pd.concat([legacy_existing, new_manifest])
+                  .drop_duplicates(subset=["h3_index", "heading"], keep="last")
+                  .reset_index(drop=True)
+            )
+        else:
+            combined = new_manifest
+        combined.to_csv(legacy_manifest, index=False)
+        print(f"  [ok] Legacy manifest updated: {legacy_manifest}  ({len(combined)} rows)")
+
+    # Summary by status
+    status_counts = new_manifest["status"].value_counts().to_dict()
+    print(f"\n  Manifest status breakdown: {status_counts}")
+    print(f"\n  Preview:\n{new_manifest.head(6).to_string(index=False)}\n")
+    print(f"- Done. {fetched} new images uploaded to s3://{BUCKET}/bronze/images/{city}/ -\n")
+    return new_manifest
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Fetch Street View images for Sarasota road points."
+        description="Fetch Street View images for road points."
+    )
+    parser.add_argument(
+        "--city",
+        choices=["sarasota", "tampa"],
+        default="sarasota",
+        help="City to fetch images for (default: sarasota).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max hexagons to process, selected by proximity to city center.",
     )
     parser.add_argument(
         "--dry-run",
@@ -262,4 +343,4 @@ if __name__ == "__main__":
         help="Process only 5 hexagons (for testing).",
     )
     args = parser.parse_args()
-    main(dry_run=args.dry_run)
+    main(city=args.city, dry_run=args.dry_run, limit=args.limit)
