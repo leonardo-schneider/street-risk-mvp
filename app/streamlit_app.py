@@ -88,6 +88,192 @@ st.set_page_config(
     page_icon="🛣️",
 )
 
+# ── SpaceX design system ──────────────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700&display=swap');
+
+/* Canvas */
+.stApp, .main, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    background: #000000 !important;
+}
+.main .block-container {
+    background: #000000 !important;
+    padding-top: 0 !important;
+    max-width: 100% !important;
+}
+
+/* Global text */
+body, p, span, div, li, td, th, a {
+    color: #f0f0fa;
+    font-family: 'Barlow Condensed', Arial, Verdana, sans-serif !important;
+}
+h1, h2, h3, h4, h5, h6, [data-testid="stHeading"] {
+    color: #f0f0fa !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.17px !important;
+    font-weight: 700 !important;
+    font-family: 'Barlow Condensed', Arial, Verdana, sans-serif !important;
+    margin-bottom: 0.5rem !important;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div {
+    background: #060606 !important;
+    border-right: 1px solid rgba(240,240,250,0.12) !important;
+}
+[data-testid="stSidebar"] *:not(svg):not(path):not(canvas) {
+    color: #f0f0fa !important;
+}
+
+/* Buttons */
+.stButton > button {
+    background: rgba(240,240,250,0.07) !important;
+    color: #f0f0fa !important;
+    border: 1px solid rgba(240,240,250,0.35) !important;
+    border-radius: 32px !important;
+    font-family: 'Barlow Condensed', Arial, Verdana, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 12px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.5px !important;
+    padding: 10px 26px !important;
+    box-shadow: none !important;
+    transition: all 0.15s ease !important;
+}
+.stButton > button:hover {
+    background: rgba(240,240,250,0.16) !important;
+    border-color: rgba(240,240,250,0.65) !important;
+    color: #ffffff !important;
+    box-shadow: none !important;
+}
+
+/* Text inputs */
+.stTextInput > div > div,
+.stTextInput > div > div > input {
+    background: rgba(240,240,250,0.04) !important;
+    border: 1px solid rgba(240,240,250,0.18) !important;
+    border-radius: 2px !important;
+    color: #f0f0fa !important;
+    caret-color: #f0f0fa !important;
+    font-family: 'Barlow Condensed', Arial, Verdana, sans-serif !important;
+}
+.stTextInput > div > div > input::placeholder {
+    color: rgba(240,240,250,0.3) !important;
+}
+.stTextInput label, [data-testid="stWidgetLabel"] > div > p {
+    color: rgba(240,240,250,0.55) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.2px !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+}
+
+/* Metrics */
+[data-testid="metric-container"] {
+    background: rgba(240,240,250,0.02) !important;
+    border: 1px solid rgba(240,240,250,0.1) !important;
+    border-radius: 2px !important;
+    padding: 14px 12px !important;
+}
+[data-testid="stMetricValue"] {
+    color: #f0f0fa !important;
+    font-size: 1.8rem !important;
+    font-weight: 700 !important;
+    font-family: 'Barlow Condensed', Arial, Verdana, sans-serif !important;
+}
+[data-testid="stMetricLabel"] p {
+    color: rgba(240,240,250,0.45) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.2px !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent !important;
+    border-bottom: 1px solid rgba(240,240,250,0.12) !important;
+    gap: 0 !important;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: rgba(240,240,250,0.38) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.4px !important;
+    font-weight: 700 !important;
+    font-size: 11px !important;
+    border: none !important;
+    padding: 14px 32px !important;
+    border-radius: 0 !important;
+}
+.stTabs [aria-selected="true"] {
+    color: #f0f0fa !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab-highlight"] {
+    background: #f0f0fa !important;
+    height: 2px !important;
+}
+
+/* Dividers */
+hr {
+    border: none !important;
+    border-top: 1px solid rgba(240,240,250,0.1) !important;
+    margin: 18px 0 !important;
+}
+[data-testid="stDivider"] {
+    border-color: rgba(240,240,250,0.1) !important;
+}
+
+/* Alerts */
+[data-testid="stAlert"] {
+    background: rgba(240,240,250,0.03) !important;
+    border: 1px solid rgba(240,240,250,0.14) !important;
+    border-left: 3px solid rgba(240,240,250,0.45) !important;
+    border-radius: 2px !important;
+}
+[data-testid="stAlert"] p { color: #f0f0fa !important; }
+
+/* Captions */
+[data-testid="stCaptionContainer"] p, .stCaption {
+    color: rgba(240,240,250,0.4) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.8px !important;
+    font-size: 9px !important;
+    font-weight: 700 !important;
+}
+
+/* Map / iframe */
+[data-testid="stIframe"], .element-container iframe {
+    border: 1px solid rgba(240,240,250,0.15) !important;
+    border-radius: 2px !important;
+}
+
+/* Images */
+[data-testid="stImage"] img {
+    border: 1px solid rgba(240,240,250,0.1) !important;
+    border-radius: 2px !important;
+}
+
+/* Progress bar */
+.stProgress > div > div > div { background: #f0f0fa !important; }
+
+/* Spinner */
+.stSpinner > div { border-top-color: #f0f0fa !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; background: #000000; }
+::-webkit-scrollbar-thumb { background: rgba(240,240,250,0.18); }
+
+/* Hide Streamlit chrome */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+[data-testid="stToolbar"] { display: none; }
+.stDeployButton { display: none; }
+</style>
+""", unsafe_allow_html=True)
+
 # ── API helpers ───────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
@@ -251,7 +437,7 @@ def render_label_tab():
 # ── map builder ───────────────────────────────────────────────────────────────
 
 def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None) -> folium.Map:
-    m = folium.Map(location=SARASOTA_CENTER, zoom_start=13, tiles="CartoDB positron")
+    m = folium.Map(location=SARASOTA_CENTER, zoom_start=13, tiles="CartoDB dark_matter")
 
     if geojson:
         for feature in geojson.get("features", []):
@@ -286,13 +472,20 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
 
     # Gradient legend
     legend_html = """
-    <div style="position:fixed;bottom:30px;left:30px;z-index:1000;background:white;
-                padding:10px 14px;border-radius:8px;border:1px solid #ccc;font-size:12px;">
-        <b>Risk score</b><br>
+    <div style="position:fixed;bottom:24px;left:24px;z-index:1000;
+                background:rgba(0,0,0,0.85);
+                padding:12px 16px;
+                border:1px solid rgba(240,240,250,0.18);
+                border-radius:2px;
+                font-family:Arial,Verdana,sans-serif;
+                font-size:9px;font-weight:700;
+                letter-spacing:1.2px;text-transform:uppercase;
+                color:#f0f0fa;">
+        RISK SCORE<br>
         <div style="background:linear-gradient(to right,#1a9850,#fee090,#d73027);
-                    width:120px;height:12px;border-radius:3px;margin:4px 0;"></div>
-        <div style="display:flex;justify-content:space-between;width:120px;">
-            <span>Low</span><span>High</span>
+                    width:110px;height:6px;border-radius:1px;margin:6px 0 4px 0;"></div>
+        <div style="display:flex;justify-content:space-between;width:110px;color:rgba(240,240,250,0.55);">
+            <span>LOW</span><span>HIGH</span>
         </div>
     </div>
     """
@@ -322,11 +515,23 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
 # ── risk card helpers ─────────────────────────────────────────────────────────
 
 def risk_badge(tier: str) -> str:
-    color = {"High": "#d73027", "Medium": "#e07b00", "Low": "#1a9850"}.get(tier, "#888")
+    border = {"High": "#cf2b2b", "Medium": "#9e6200", "Low": "#1a6b3a"}.get(tier, "rgba(240,240,250,0.25)")
+    text   = {"High": "#e87070", "Medium": "#d4983c", "Low": "#4caf80"}.get(tier, "#f0f0fa")
+    label  = {"High": "HIGH RISK", "Medium": "MEDIUM RISK", "Low": "LOW RISK"}.get(tier, "UNKNOWN")
     return (
-        f'<div style="display:inline-block;background:{color};color:white;'
-        f'padding:8px 22px;border-radius:20px;font-size:1.3rem;font-weight:700;">'
-        f'{TIER_EMOJI.get(tier,"")} {tier} Risk</div>'
+        f'<div style="'
+        f'display:inline-block;'
+        f'background:rgba(240,240,250,0.04);'
+        f'color:{text};'
+        f'border:1px solid {border};'
+        f'padding:10px 22px;'
+        f'border-radius:2px;'
+        f'font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+        f'font-size:0.85rem;'
+        f'font-weight:700;'
+        f'letter-spacing:2.5px;'
+        f'text-transform:uppercase;'
+        f'">{label}</div>'
     )
 
 
@@ -342,22 +547,26 @@ def risk_color(score: float, tier: str = "Medium") -> str:
 
 
 def top_factors_chart(top_risk_factors: list, hex_data: dict) -> go.Figure:
-    labels = [CLIP_LABEL.get(f, f) for f in top_risk_factors]
+    labels = [CLIP_LABEL.get(f, f).upper() for f in top_risk_factors]
     clip_scores = hex_data.get("clip_scores", {})
     scores = [round(clip_scores.get(f, 0) * 100, 3) for f in top_risk_factors]
-    colors = ["#d73027", "#fc8d59", "#fee090"]
+    colors = ["#cf2b2b", "#9e4a00", "#6b6b00"]
 
     fig = go.Figure(go.Bar(
         x=scores, y=labels, orientation="h",
         marker_color=colors[:len(labels)],
         text=[f"{s:.1f}%" for s in scores],
         textposition="outside",
+        textfont=dict(color="#f0f0fa", size=10),
     ))
     fig.update_layout(
         height=180,
-        margin=dict(l=0, r=40, t=10, b=10),
+        margin=dict(l=0, r=50, t=10, b=10),
         xaxis=dict(visible=False),
-        yaxis=dict(autorange="reversed"),
+        yaxis=dict(
+            autorange="reversed",
+            tickfont=dict(color="rgba(240,240,250,0.55)", size=9, family="Arial"),
+        ),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
@@ -370,30 +579,40 @@ def shap_chart(shap_values: dict, tier: str) -> go.Figure:
         return go.Figure()
 
     items  = sorted(shap_values.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
-    labels = [FEATURE_LABEL.get(k, k) for k, _ in items]
+    labels = [FEATURE_LABEL.get(k, k).upper() for k, _ in items]
     values = [v for _, v in items]
-    colors = ["#d73027" if v > 0 else "#1a9850" for v in values]
+    colors = ["#cf2b2b" if v > 0 else "#1a6b3a" for v in values]
 
     fig = go.Figure(go.Bar(
         x=values,
         y=labels,
         orientation="h",
         marker_color=colors,
-        text=[f"{v:+.2f}" for v in values],
+        text=[f"{v:+.1f}" for v in values],
         textposition="outside",
+        textfont=dict(color="#f0f0fa", size=10),
     ))
     fig.update_layout(
         height=260,
         margin=dict(l=0, r=50, t=10, b=10),
-        xaxis=dict(title="Impact on crash density prediction", zeroline=True, zerolinecolor="#cccccc"),
-        yaxis=dict(autorange="reversed"),
+        xaxis=dict(
+            title=dict(text="IMPACT ON CRASH DENSITY", font=dict(color="rgba(240,240,250,0.35)", size=9)),
+            tickfont=dict(color="rgba(240,240,250,0.35)", size=9),
+            zeroline=True,
+            zerolinecolor="rgba(240,240,250,0.15)",
+            gridcolor="rgba(240,240,250,0.05)",
+        ),
+        yaxis=dict(
+            autorange="reversed",
+            tickfont=dict(color="rgba(240,240,250,0.55)", size=9, family="Arial"),
+        ),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
 
-def radar_chart(data_a: dict, data_b: dict, gold_df) -> go.Figure:
+def radar_chart(data_a: dict, data_b: dict, gold_df) -> go.Figure:  # noqa: C901
     """Spider chart comparing two hexagons across 5 normalized dimensions."""
     feat_labels = [lab for _, lab in RADAR_FEATURES]
 
@@ -423,19 +642,42 @@ def radar_chart(data_a: dict, data_b: dict, gold_df) -> go.Figure:
 
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
-        r=ra, theta=theta, fill="toself", name="Location A",
-        line_color="#d73027", fillcolor="rgba(215,48,39,0.15)",
+        r=ra, theta=theta, fill="toself", name="ZONE A",
+        line=dict(color="#cf2b2b", width=1.5),
+        fillcolor="rgba(207,43,43,0.12)",
     ))
     fig.add_trace(go.Scatterpolar(
-        r=rb, theta=theta, fill="toself", name="Location B",
-        line_color="#1a9850", fillcolor="rgba(26,152,80,0.15)",
+        r=rb, theta=theta, fill="toself", name="ZONE B",
+        line=dict(color="#1a6b3a", width=1.5),
+        fillcolor="rgba(26,107,58,0.12)",
     ))
     fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1],
+                tickfont=dict(color="rgba(240,240,250,0.25)", size=8),
+                gridcolor="rgba(240,240,250,0.08)",
+                linecolor="rgba(240,240,250,0.1)",
+            ),
+            angularaxis=dict(
+                tickfont=dict(color="rgba(240,240,250,0.55)", size=9, family="Arial"),
+                gridcolor="rgba(240,240,250,0.08)",
+                linecolor="rgba(240,240,250,0.1)",
+            ),
+        ),
         showlegend=True,
+        legend=dict(
+            font=dict(color="#f0f0fa", size=10),
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor="rgba(240,240,250,0.12)",
+            borderwidth=1,
+        ),
         height=340,
         margin=dict(l=40, r=40, t=50, b=40),
         paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -461,8 +703,13 @@ def _score_address(addr_key: str, data_key: str, coords_key: str):
 
 
 def render_compare_tab():
-    st.subheader("Compare two zones")
-    st.caption("Score two addresses side-by-side and see what drives the risk difference.")
+    st.markdown("""<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+        font-size:0.62rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+        color:rgba(240,240,250,0.35);margin-bottom:4px;">COMPARE ZONES</div>
+        <div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+        font-size:0.72rem;color:rgba(240,240,250,0.2);letter-spacing:1px;text-transform:uppercase;
+        margin-bottom:18px;">SCORE TWO ADDRESSES — SIDE BY SIDE RISK ANALYSIS</div>""",
+        unsafe_allow_html=True)
 
     # Per-side session state
     for key in ("cmp_data_a", "cmp_coords_a", "cmp_data_b", "cmp_coords_b"):
@@ -503,9 +750,15 @@ def render_compare_tab():
         with col:
             if data is None:
                 st.markdown(
-                    f'<div style="border:1px dashed #ccc;border-radius:8px;padding:32px;'
-                    f'text-align:center;color:#aaa;font-size:0.95rem;">'
-                    f'Score Address {label} to see results here.</div>',
+                    f'<div style="'
+                    f'border:1px dashed rgba(240,240,250,0.15);'
+                    f'border-radius:2px;'
+                    f'padding:40px 24px;'
+                    f'text-align:center;'
+                    f'color:rgba(240,240,250,0.2);'
+                    f'font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+                    f'font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">'
+                    f'SCORE ADDRESS {label} TO SEE RESULTS</div>',
                     unsafe_allow_html=True,
                 )
                 continue
@@ -548,8 +801,11 @@ def render_compare_tab():
     if data_a.get("risk_tier") == "Unknown" or data_b.get("risk_tier") == "Unknown":
         return
 
-    st.divider()
-    st.subheader("Comparison summary")
+    st.markdown("<hr style='border-color:rgba(240,240,250,0.08);margin:18px 0;'>", unsafe_allow_html=True)
+    st.markdown("""<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+        font-size:0.62rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+        color:rgba(240,240,250,0.35);margin-bottom:14px;">COMPARATIVE ANALYSIS</div>""",
+        unsafe_allow_html=True)
 
     density_a = data_a.get("crash_density", 0) or 0.0
     density_b = data_b.get("crash_density", 0) or 0.0
@@ -594,22 +850,62 @@ def render_compare_tab():
 
 # ── main UI ───────────────────────────────────────────────────────────────────
 
-# Header
-st.title("🛣️ Street Risk — Sarasota Zone Risk Scorer")
-st.markdown(
-    "Predict micro-zone road crash risk from street-level imagery and road features. "
-    "**Powered by Street View imagery + CLIP + LightGBM**"
-)
-st.divider()
+# Header banner
+st.markdown("""
+<div style="
+    width:100%;
+    background:#000000;
+    border-bottom:1px solid rgba(240,240,250,0.12);
+    padding:28px 0 22px 0;
+    margin-bottom:4px;
+    text-align:left;
+">
+  <div style="
+    font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+    font-size:2.6rem;
+    font-weight:700;
+    letter-spacing:3.5px;
+    text-transform:uppercase;
+    color:#f0f0fa;
+    line-height:1;
+    margin-bottom:8px;
+  ">STREET RISK</div>
+  <div style="
+    font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+    font-size:0.68rem;
+    font-weight:700;
+    letter-spacing:2.5px;
+    text-transform:uppercase;
+    color:rgba(240,240,250,0.38);
+    line-height:1;
+  ">MICRO-ZONE ROAD RISK INTELLIGENCE &mdash; SARASOTA, FL</div>
+</div>
+""", unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.header("Score a location")
+    st.markdown("""
+    <div style="
+        font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+        font-size:0.62rem;font-weight:700;
+        letter-spacing:2px;text-transform:uppercase;
+        color:rgba(240,240,250,0.35);
+        margin-bottom:14px;margin-top:6px;
+    ">SCORE A LOCATION</div>
+    """, unsafe_allow_html=True)
     address = st.text_input("Address", value=DEFAULT_ADDRESS)
     score_btn = st.button("Score this location", type="primary", use_container_width=True)
 
-    st.divider()
-    st.subheader("Project stats")
+    st.markdown("<hr style='border-color:rgba(240,240,250,0.08);margin:18px 0;'>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="
+        font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+        font-size:0.62rem;font-weight:700;
+        letter-spacing:2px;text-transform:uppercase;
+        color:rgba(240,240,250,0.35);
+        margin-bottom:14px;
+    ">SYSTEM STATUS</div>
+    """, unsafe_allow_html=True)
 
     stats = fetch_stats()
     if stats:
@@ -618,8 +914,8 @@ with st.sidebar:
         tier_dist = stats.get("risk_tier_distribution", {})
         st.bar_chart(
             pd.Series(tier_dist).rename("Count"),
-            color=["#d73027"],
-            height=160,
+            color=["#cf2b2b"],
+            height=140,
         )
     else:
         st.warning("API unavailable — start the FastAPI server on port 8000.")
@@ -663,7 +959,10 @@ with tab_map:
     col_map, col_card = st.columns([6, 4])
 
     with col_map:
-        st.subheader("Risk map — Sarasota, FL")
+        st.markdown("""<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+            font-size:0.62rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+            color:rgba(240,240,250,0.35);margin-bottom:8px;">RISK MAP — SARASOTA, FL</div>""",
+            unsafe_allow_html=True)
         m = build_map(
             geojson,
             scored_lat=st.session_state.score_lat,
@@ -673,25 +972,35 @@ with tab_map:
         st_folium(m, width=None, height=520, returned_objects=[])
 
     with col_card:
-        st.subheader("Risk assessment")
+        st.markdown("""<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+            font-size:0.62rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+            color:rgba(240,240,250,0.35);margin-bottom:8px;">ZONE ASSESSMENT</div>""",
+            unsafe_allow_html=True)
 
         if not st.session_state.scored:
-            st.info("Enter an address in the sidebar and click **Score this location**.")
+            st.markdown("""
+            <div style="border:1px dashed rgba(240,240,250,0.12);border-radius:2px;
+                padding:32px 20px;text-align:center;
+                font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+                font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+                color:rgba(240,240,250,0.2);">
+                ENTER AN ADDRESS AND SCORE TO BEGIN
+            </div>""", unsafe_allow_html=True)
         else:
             data = st.session_state.score_data
             tier = data.get("risk_tier", "Unknown")
 
             if tier == "Unknown":
                 st.warning(data.get("message", "No data available for this location."))
-                st.caption(f"H3 index: `{data.get('h3_index','')}`")
+                st.caption(f"H3 index: {data.get('h3_index','')}")
             else:
                 st.markdown(risk_badge(tier), unsafe_allow_html=True)
                 st.write("")
                 m1, m2 = st.columns(2)
-                m1.metric("Crashes per km²", f"{data.get('crash_density', 0):.1f}")
+                m1.metric("Crashes / km²", f"{data.get('crash_density', 0):.1f}")
                 pct = data.get("percentile", 0)
                 m2.metric("Riskier than", f"{pct:.0f}% of zones")
-                st.caption("Top contributing risk factors (CLIP scores)")
+                st.caption("Top visual risk factors (CLIP scores)")
                 top3   = data.get("top_risk_factors", [])
                 detail = st.session_state.hex_detail or data
                 if top3:
@@ -703,7 +1012,7 @@ with tab_map:
                     sv_url = STREETVIEW_URL.format(lat=lat, lon=lon, key=GOOGLE_API_KEY)
                     st.image(sv_url, caption="Street View at scored location", use_container_width=True)
                 st.info(RISK_EXPLANATION.get(tier, ""))
-                st.caption(f"H3 index: `{data.get('h3_index','')}`")
+                st.caption(f"H3 {data.get('h3_index','')}")
 
 with tab_compare:
     render_compare_tab()
