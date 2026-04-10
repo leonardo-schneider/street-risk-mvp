@@ -912,11 +912,33 @@ with st.sidebar:
         st.metric("Hexagons scored", stats["total_hexagons"])
         st.metric("Mean crash density", f"{stats['mean_crash_density']:.1f} /km²")
         tier_dist = stats.get("risk_tier_distribution", {})
-        st.bar_chart(
-            pd.Series(tier_dist).rename("Count"),
-            color=["#cf2b2b"],
-            height=140,
-        )
+        if tier_dist:
+            order  = ["High", "Medium", "Low"]
+            labels = [t for t in order if t in tier_dist]
+            values = [tier_dist[t] for t in labels]
+            colors = {"High": "#cf2b2b", "Medium": "#9e6200", "Low": "#1a6b3a"}
+            bar_colors = [colors[t] for t in labels]
+            fig_sb = go.Figure(go.Bar(
+                x=labels,
+                y=values,
+                marker_color=bar_colors,
+                text=values,
+                textposition="outside",
+                textfont=dict(color="rgba(240,240,250,0.55)", size=9),
+            ))
+            fig_sb.update_layout(
+                height=140,
+                margin=dict(l=0, r=0, t=8, b=0),
+                xaxis=dict(
+                    tickfont=dict(color="rgba(240,240,250,0.4)", size=9, family="Arial"),
+                    showgrid=False, zeroline=False, showline=False,
+                ),
+                yaxis=dict(visible=False),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_sb, use_container_width=True, config={"displayModeBar": False})
     else:
         st.warning("API unavailable — start the FastAPI server on port 8000.")
 
