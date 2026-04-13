@@ -57,6 +57,32 @@ Street View images        OSM road network        FDOT crash records
 
 ## Key Results
 
+### Cross-City Generalization — The Headline Result
+
+| Model | Train | Test | Spearman | RMSE |
+|-------|-------|------|----------|------|
+| LightGBM v1 | Sarasota | Sarasota (geo split) | 0.666 | 80.28 |
+| LightGBM v2 | Sarasota | **Tampa (unseen city)** | **0.692** | 331.18 |
+
+> Trained exclusively on Sarasota crash data and street imagery.
+> Tested on Tampa with zero Tampa training examples.
+> Spearman 0.692 confirms the visual risk signal generalizes
+> across cities — the model learned road risk patterns,
+> not Sarasota-specific geography.
+
+### Why RMSE is high on Tampa
+Tampa's mean crash density (230/km²) is 2x Sarasota's (116/km²).
+The model predicts on Sarasota's scale — rank ordering is preserved
+(Spearman 0.692) but absolute magnitude is systematically
+underestimated. A city-specific recalibration layer would fix this.
+
+### Feature importance — Cross-city model
+CLIP visual features dominate the top 10 when generalizing
+across cities, with `traffic_signals_count` and `fast_food_count`
+as the strongest POI contributors.
+
+---
+
 ### Model Comparison — Geographic Out-of-Distribution Test Split
 
 Training uses KMeans spatial clustering (n=5); cluster 0 is held out as test.
@@ -168,9 +194,12 @@ Gold    (S3: street-risk-mvp/gold/)
 
 | Source | Records | Notes |
 |--------|---------|-------|
-| Google Street View Static API | 770 images | 640x640, cached in S3 Bronze |
-| OpenStreetMap via OSMnx | 6,655 road points | Sarasota drive network |
-| FDOT Open Data Hub | 19,824 crashes | Sarasota County, all years |
+| Google Street View Static API (Sarasota) | 1,550 images | 4 headings x 414 hexagons, cached in S3 Bronze |
+| Google Street View Static API (Tampa) | 1,664 images | 4 headings x 416 urban hexagons, cached in S3 Bronze |
+| OpenStreetMap via OSMnx | 6,655+ road points | Sarasota + Tampa drive networks |
+| FDOT Open Data Hub (Sarasota) | 19,824 crashes | Sarasota County, all years |
+| FDOT Open Data Hub (Tampa) | 91,260 crashes | Hillsborough County, all years |
+| **Total** | **3,214 images, 830 hexagons, 111,084 crashes** | |
 
 ---
 
@@ -200,8 +229,13 @@ Gold    (S3: street-risk-mvp/gold/)
 
 ## Future Work
 
-- **Zero-shot transfer**: apply Sarasota model to Tampa with zero Tampa
-  training data; validate Spearman against FDOT Tampa crashes
+- **Recalibration layer for cross-city magnitude scaling**: fit a city-specific
+  isotonic regression on top of the cross-city model to correct systematic
+  under/over-prediction driven by city-level density differences
+- **Orlando expansion for 3-city validation**: add a third Florida city with
+  different urban morphology to confirm cross-city Spearman holds
+- **iRAP dataset integration**: incorporate International Road Assessment
+  Programme labels as supervised visual risk features for CLIP fine-tuning
 - **More images per hex**: 5+ images vs current ~1.3 average would reduce
   CLIP variance substantially
 - **CLIP fine-tuning** on road-safety-labelled imagery (e.g. dashcam datasets)
