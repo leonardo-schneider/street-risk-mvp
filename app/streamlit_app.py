@@ -280,16 +280,29 @@ section[data-testid="stSidebar"] > div:first-child {
     padding-top: 1rem;
 }
 
+/* Hide the broken keyboard shortcut text in sidebar toggle */
+[data-testid="collapsedControl"] span {
+    display: none !important;
+}
+
 [data-testid="collapsedControl"] {
-    background-color: #1a1a1a !important;
-    border: 1px solid #333 !important;
+    background-color: #111111 !important;
+    border: 1px solid #444 !important;
     border-radius: 0 !important;
-    color: #ffffff !important;
+    color: white !important;
+    min-width: 24px !important;
+    width: 24px !important;
 }
 
 [data-testid="collapsedControl"]:hover {
     background-color: #333 !important;
     border-color: #ffffff !important;
+}
+
+/* Make sure sidebar can be reopened */
+section[data-testid="stSidebar"][aria-expanded="false"] {
+    min-width: 0px !important;
+    width: 0px !important;
 }
 </style>
 """, unsafe_allow_html=True)
