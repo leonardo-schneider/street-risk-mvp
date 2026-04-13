@@ -1,16 +1,20 @@
 """
 pipeline/gold/build_gold_table.py
 
-Assembles the final Gold training table by joining:
-  - Silver crash hex aggregates  (target variable)
-  - Silver CLIP hex features      (image features)
-  - Bronze road points            (tabular road features)
+Assembles Gold training tables by joining Silver layers.
 
-Output: data/gold/training_table/sarasota_gold.parquet
-        s3://street-risk-mvp/gold/training_table/sarasota_gold.parquet
+Single-city mode (default / --city sarasota|tampa):
+  Outputs: data/gold/training_table/{city}_gold.parquet
+
+Multi-city mode (--multicity):
+  Stacks Sarasota + Tampa, adds `city` column, includes POI features.
+  Outputs: data/gold/training_table/multicity_gold.parquet
 
 Usage:
-    python pipeline/gold/build_gold_table.py
+    python pipeline/gold/build_gold_table.py                    # sarasota (default)
+    python pipeline/gold/build_gold_table.py --city tampa
+    python pipeline/gold/build_gold_table.py --multicity
+    python pipeline/gold/build_gold_table.py --use-probe        # sarasota probe features
 """
 
 import argparse
@@ -31,13 +35,7 @@ load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env", override=True)
 BUCKET = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
 REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
-# ── paths ─────────────────────────────────────────────────────────────────────
-CRASH_PATH = Path(__file__).parents[2] / "data" / "silver" / "crash_hex"      / "sarasota_crash_hex.parquet"
-CLIP_PATH  = Path(__file__).parents[2] / "data" / "silver" / "image_features" / "sarasota_clip_hex.parquet"
-PROBE_PATH = Path(__file__).parents[2] / "data" / "silver" / "image_features" / "sarasota_clip_probe_hex.parquet"
-ROAD_PATH  = Path(__file__).parents[2] / "data" / "bronze" / "sarasota_road_points.parquet"
-GOLD_LOCAL = Path(__file__).parents[2] / "data" / "gold"   / "training_table" / "sarasota_gold.parquet"
-GOLD_S3KEY = "gold/training_table/sarasota_gold.parquet"
+ROOT = Path(__file__).parents[2]
 
 CLIP_COLS = [
     "clip_heavy_traffic", "clip_poor_lighting", "clip_no_sidewalks",
@@ -45,7 +43,12 @@ CLIP_COLS = [
     "clip_parked_cars",
 ]
 
-FINAL_COLS = [
+POI_COLS = [
+    "bars_count", "schools_count", "hospitals_count",
+    "gas_stations_count", "fast_food_count", "traffic_signals_count",
+]
+
+BASE_COLS = [
     "h3_index",
     "crash_density", "crash_count", "injury_rate",
     *CLIP_COLS,
@@ -54,12 +57,13 @@ FINAL_COLS = [
     "risk_tier",
 ]
 
-FINAL_COLS_PROBE = [
-    "h3_index",
+MULTICITY_COLS = [
+    "h3_index", "city",
     "crash_density", "crash_count", "injury_rate",
-    "clip_risk_prob",
+    *CLIP_COLS,
     "road_type_primary", "speed_limit_mean", "lanes_mean",
     "dist_to_intersection_mean", "point_count",
+    *POI_COLS,
     "risk_tier",
 ]
 
@@ -72,55 +76,77 @@ def aggregate_roads(roads: pd.DataFrame) -> pd.DataFrame:
     roads["lanes"]       = roads["lanes"].fillna(1.0)
 
     agg = roads.groupby("h3_index").agg(
-        road_type_primary       = ("road_type",            lambda x: x.mode().iloc[0] if len(x) else "unclassified"),
-        speed_limit_mean        = ("speed_limit",          "mean"),
-        lanes_mean              = ("lanes",                "mean"),
-        dist_to_intersection_mean = ("dist_to_intersection_m", "mean"),
-        point_count             = ("h3_index",             "count"),
+        road_type_primary         = ("road_type",                lambda x: x.mode().iloc[0] if len(x) else "unclassified"),
+        speed_limit_mean          = ("speed_limit",              "mean"),
+        lanes_mean                = ("lanes",                    "mean"),
+        dist_to_intersection_mean = ("dist_to_intersection_m",  "mean"),
+        point_count               = ("h3_index",                 "count"),
     ).reset_index()
-
     return agg
 
 
-# ── joins ─────────────────────────────────────────────────────────────────────
+# ── join ──────────────────────────────────────────────────────────────────────
 
-def build_gold(clip: pd.DataFrame, roads_agg: pd.DataFrame, crash: pd.DataFrame) -> pd.DataFrame:
-    # Start with CLIP (image-covered hexagons)
+def build_city_gold(city: str, use_poi: bool = False) -> pd.DataFrame:
+    """Build the gold table for a single city."""
+    data = ROOT / "data"
+
+    clip_path  = data / "silver" / "image_features" / f"{city}_clip_hex.parquet"
+    crash_path = data / "silver" / "crash_hex"       / f"{city}_crash_hex.parquet"
+    road_path  = data / "bronze"                     / f"{city}_road_points.parquet"
+    poi_path   = data / "silver" / "poi_features"    / f"{city}_poi_hex.parquet"
+
+    if not clip_path.exists():
+        raise FileNotFoundError(f"CLIP hex not found: {clip_path}")
+    if not crash_path.exists():
+        raise FileNotFoundError(f"Crash hex not found: {crash_path}")
+    if not road_path.exists():
+        raise FileNotFoundError(f"Road points not found: {road_path}")
+
+    clip  = pd.read_parquet(clip_path)
+    crash = pd.read_parquet(crash_path)
+    roads = pd.read_parquet(road_path)
+
+    roads_agg = aggregate_roads(roads)
+
     gold = clip.copy()
-
-    # Left join road aggregates
     gold = gold.merge(roads_agg, on="h3_index", how="left")
-
-    # Left join crash data
     gold = gold.merge(
         crash[["h3_index", "crash_count", "crash_density", "injury_rate"]],
-        on="h3_index",
-        how="left",
+        on="h3_index", how="left",
     )
-
-    # Hexagons with no crash records → zero crashes
     gold["crash_count"]   = gold["crash_count"].fillna(0.0)
     gold["crash_density"] = gold["crash_density"].fillna(0.0)
     gold["injury_rate"]   = gold["injury_rate"].fillna(0.0)
 
+    if use_poi:
+        if poi_path.exists():
+            poi = pd.read_parquet(poi_path)
+            gold = gold.merge(poi, on="h3_index", how="left")
+            for col in POI_COLS:
+                gold[col] = gold[col].fillna(0).astype(int)
+        else:
+            print(f"  [warn] POI file not found for {city}, filling zeros: {poi_path}")
+            for col in POI_COLS:
+                gold[col] = 0
+
+    gold["city"] = city
     return gold
 
 
 # ── risk tier ─────────────────────────────────────────────────────────────────
 
-def add_risk_tier(gold: pd.DataFrame) -> pd.DataFrame:
-    p33 = gold["crash_density"].quantile(0.33)
-    p66 = gold["crash_density"].quantile(0.66)
+def add_risk_tier(df: pd.DataFrame) -> tuple:
+    p33 = df["crash_density"].quantile(0.33)
+    p66 = df["crash_density"].quantile(0.66)
 
     def tier(v):
-        if v <= p33:
-            return "Low"
-        elif v <= p66:
-            return "Medium"
+        if v <= p33:   return "Low"
+        elif v <= p66: return "Medium"
         return "High"
 
-    gold["risk_tier"] = gold["crash_density"].apply(tier)
-    return gold, p33, p66
+    df["risk_tier"] = df["crash_density"].apply(tier)
+    return df, p33, p66
 
 
 # ── S3 ────────────────────────────────────────────────────────────────────────
@@ -137,8 +163,7 @@ def s3_key_exists(client, bucket, key):
 
 def upload(local_path: Path, bucket: str, key: str):
     client = boto3.client(
-        "s3",
-        region_name=REGION,
+        "s3", region_name=REGION,
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     )
@@ -148,42 +173,53 @@ def upload(local_path: Path, bucket: str, key: str):
     print(f"  [ok] Uploaded: s3://{bucket}/{key}")
 
 
+def save_parquet(df: pd.DataFrame, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), path)
+    print(f"  [ok] Saved locally: {path}")
+
+
 # ── summary ───────────────────────────────────────────────────────────────────
 
-def print_summary(gold: pd.DataFrame, p33: float, p66: float, final_cols: list):
-    n_total       = len(gold)
-    n_with_crash  = (gold["crash_count"] > 0).sum()
-    n_zero_crash  = n_total - n_with_crash
+def print_summary(gold: pd.DataFrame, p33: float, p66: float, final_cols: list, label: str = ""):
+    n_total      = len(gold)
+    n_with_crash = (gold["crash_count"] > 0).sum()
 
-    print("\n" + "=" * 60)
-    print("  GOLD TABLE SUMMARY")
-    print("=" * 60)
+    print(f"\n{'='*60}")
+    print(f"  GOLD TABLE SUMMARY{' — ' + label if label else ''}")
+    print(f"{'='*60}")
     print(f"\n  Total hexagons          : {n_total}")
     print(f"  With crash data         : {n_with_crash}  ({100*n_with_crash/n_total:.1f}%)")
-    print(f"  Zero-crash hexagons     : {n_zero_crash}  ({100*n_zero_crash/n_total:.1f}%)")
     print(f"\n  Risk tier thresholds:")
-    print(f"    p33 (Low/Med boundary) : {p33:.2f} crashes/km2")
-    print(f"    p66 (Med/High boundary): {p66:.2f} crashes/km2")
-
+    print(f"    p33 : {p33:.2f} crashes/km2")
+    print(f"    p66 : {p66:.2f} crashes/km2")
     print(f"\n  Risk tier distribution:")
     for tier, count in gold["risk_tier"].value_counts().sort_index().items():
-        print(f"    {tier:<8} : {count:>4}  ({100*count/n_total:.1f}%)")
+        print(f"    {tier:<8} : {count:>5}  ({100*count/n_total:.1f}%)")
 
-    print(f"\n  crash_density stats:")
+    if "city" in gold.columns:
+        print(f"\n  By city:")
+        for city, grp in gold.groupby("city"):
+            print(f"    {city:<12}: {len(grp):>5} hexagons  "
+                  f"density mean={grp['crash_density'].mean():.1f}  max={grp['crash_density'].max():.1f}")
+
     d = gold["crash_density"]
-    print(f"    min={d.min():.2f}  mean={d.mean():.2f}  median={d.median():.2f}  max={d.max():.2f}")
+    print(f"\n  crash_density: min={d.min():.2f}  mean={d.mean():.2f}  median={d.median():.2f}  max={d.max():.2f}")
 
     print(f"\n  Feature correlations with crash_density:")
-    clip_present = [c for c in gold.columns if c.startswith("clip_")]
-    num_cols = clip_present + ["speed_limit_mean", "lanes_mean", "dist_to_intersection_mean", "point_count"]
+    num_cols = [c for c in gold.columns
+                if c.startswith("clip_") or c in
+                ["speed_limit_mean","lanes_mean","dist_to_intersection_mean","point_count",
+                 *POI_COLS]]
+    num_cols = [c for c in num_cols if c in gold.columns]
     corrs = gold[num_cols + ["crash_density"]].corr()["crash_density"].drop("crash_density")
-    for col, r in corrs.sort_values(key=abs, ascending=False).items():
-        bar = "#" * int(abs(r) * 30)
+    for col, r in corrs.sort_values(key=abs, ascending=False).head(15).items():
+        bar  = "#" * int(abs(r) * 30)
         sign = "+" if r >= 0 else "-"
         print(f"    {col:<32} {sign}{abs(r):.4f}  {bar}")
 
     print(f"\n  NaN counts per column:")
-    nan_counts = gold[final_cols].isna().sum()
+    nan_counts = gold[[c for c in final_cols if c in gold.columns]].isna().sum()
     any_nan = False
     for col, cnt in nan_counts.items():
         if cnt > 0:
@@ -192,76 +228,121 @@ def print_summary(gold: pd.DataFrame, p33: float, p66: float, final_cols: list):
     if not any_nan:
         print("    (none)")
 
-    print("\n" + "=" * 60)
+    print(f"\n{'='*60}")
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+# ── single-city main ──────────────────────────────────────────────────────────
 
-def main(use_probe: bool = False):
-    print("\n- Building Gold training table -\n")
-    if use_probe:
-        print("  [probe mode] Using clip_risk_prob feature instead of 7 zero-shot CLIP cols.")
-
-    # 1. Load
-    print("Step 1/5  Loading Silver + Bronze inputs ...")
-    crash = pd.read_parquet(CRASH_PATH)
-    roads = pd.read_parquet(ROAD_PATH)
+def main_single(city: str = "sarasota", use_probe: bool = False):
+    data = ROOT / "data"
+    print(f"\n- Building Gold table — {city.upper()} -\n")
 
     if use_probe:
-        if not PROBE_PATH.exists():
-            raise FileNotFoundError(
-                f"Probe hex file not found: {PROBE_PATH}\n"
-                "Run `python pipeline/features/extract_clip_features.py --use-probe` first."
-            )
-        clip = pd.read_parquet(PROBE_PATH)
-        final_cols = FINAL_COLS_PROBE
+        probe_path = data / "silver" / "image_features" / f"{city}_clip_probe_hex.parquet"
+        clip_path  = data / "silver" / "image_features" / f"{city}_clip_hex.parquet"
+        if not probe_path.exists():
+            raise FileNotFoundError(f"Probe hex not found: {probe_path}")
+        clip   = pd.read_parquet(probe_path)
+        crash  = pd.read_parquet(data / "silver" / "crash_hex" / f"{city}_crash_hex.parquet")
+        roads  = pd.read_parquet(data / "bronze" / f"{city}_road_points.parquet")
+        roads_agg = aggregate_roads(roads)
+        gold  = clip.copy()
+        gold  = gold.merge(roads_agg, on="h3_index", how="left")
+        gold  = gold.merge(crash[["h3_index","crash_count","crash_density","injury_rate"]],
+                           on="h3_index", how="left")
+        gold["crash_count"]   = gold["crash_count"].fillna(0.0)
+        gold["crash_density"] = gold["crash_density"].fillna(0.0)
+        gold["injury_rate"]   = gold["injury_rate"].fillna(0.0)
+        final_cols = ["h3_index","crash_density","crash_count","injury_rate",
+                      "clip_risk_prob","road_type_primary","speed_limit_mean",
+                      "lanes_mean","dist_to_intersection_mean","point_count","risk_tier"]
+        gold_local = data / "gold" / "training_table" / f"{city}_gold_probe.parquet"
+        gold_s3key = f"gold/training_table/{city}_gold_probe.parquet"
     else:
-        clip = pd.read_parquet(CLIP_PATH)
-        final_cols = FINAL_COLS
+        gold       = build_city_gold(city, use_poi=False)
+        final_cols = BASE_COLS
+        gold_local = data / "gold" / "training_table" / f"{city}_gold.parquet"
+        gold_s3key = f"gold/training_table/{city}_gold.parquet"
 
-    print(f"  [ok] crash_hex     : {len(crash):,} hexagons")
-    print(f"  [ok] clip_hex      : {len(clip):,} hexagons")
-    print(f"  [ok] road_points   : {len(roads):,} points across {roads['h3_index'].nunique():,} hexagons")
-
-    # 2. Aggregate roads
-    print("\nStep 2/5  Aggregating road points to hexagon level ...")
-    roads_agg = aggregate_roads(roads)
-    print(f"  [ok] {len(roads_agg):,} road hexagons aggregated")
-
-    # 3. Join
-    print("\nStep 3/5  Joining tables ...")
-    gold = build_gold(clip, roads_agg, crash)
-    print(f"  [ok] Gold table: {len(gold):,} rows x {len(gold.columns)} columns")
-
-    # 4. Risk tier
-    print("\nStep 4/5  Adding risk_tier column ...")
     gold, p33, p66 = add_risk_tier(gold)
+    gold = gold[[c for c in final_cols if c in gold.columns]]
 
-    # Enforce column order
-    gold = gold[final_cols]
-
-    # 5. Save
-    print("\nStep 5/5  Saving ...")
-    GOLD_LOCAL.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pandas(gold, preserve_index=False), GOLD_LOCAL)
-    print(f"  [ok] Saved locally: {GOLD_LOCAL}")
-    upload(GOLD_LOCAL, BUCKET, GOLD_S3KEY)
-
-    # Summary
-    print_summary(gold, p33, p66, final_cols)
+    save_parquet(gold, gold_local)
+    upload(gold_local, BUCKET, gold_s3key)
+    print_summary(gold, p33, p66, final_cols, label=city)
 
     print(f"\n  Preview (top 5 by crash_density):")
     pd.set_option("display.max_columns", None)
-    pd.set_option("display.width", 160)
+    pd.set_option("display.width", 180)
     print(gold.sort_values("crash_density", ascending=False).head(5).to_string(index=False))
-    print()
-
-    print("- Done. -\n")
+    print(f"\n- Done. -\n")
     return gold
 
 
+# ── multi-city main ───────────────────────────────────────────────────────────
+
+def main_multicity():
+    data = ROOT / "data"
+    print("\n- Building Multi-city Gold table (Sarasota + Tampa) -\n")
+    cities = ["sarasota", "tampa"]
+
+    print("Step 1/4  Building per-city gold tables ...")
+    city_golds = []
+    for city in cities:
+        print(f"\n  [{city}]")
+        g = build_city_gold(city, use_poi=True)
+        city_golds.append(g)
+        print(f"  [ok] {city}: {len(g):,} hexagons")
+
+    print("\nStep 2/4  Stacking cities ...")
+    gold = pd.concat(city_golds, ignore_index=True)
+    print(f"  [ok] Combined: {len(gold):,} hexagons")
+
+    print("\nStep 3/4  Adding risk_tier (cross-city quantiles) ...")
+    gold, p33, p66 = add_risk_tier(gold)
+
+    # Enforce column order, keep only columns that exist
+    final_cols = [c for c in MULTICITY_COLS if c in gold.columns]
+    gold = gold[final_cols]
+
+    # Confirm zero NaNs
+    nan_total = gold.isna().sum().sum()
+    print(f"  [ok] NaN count in final table: {nan_total}")
+
+    print("\nStep 4/4  Saving ...")
+    gold_local = data / "gold" / "training_table" / "multicity_gold.parquet"
+    gold_s3key = "gold/training_table/multicity_gold.parquet"
+    save_parquet(gold, gold_local)
+    upload(gold_local, BUCKET, gold_s3key)
+
+    print_summary(gold, p33, p66, final_cols, label="multicity")
+
+    print(f"\n  POI feature correlations with crash_density by city:")
+    for city in cities:
+        grp = gold[gold["city"] == city]
+        corrs = grp[[c for c in POI_COLS if c in grp.columns] + ["crash_density"]].corr()["crash_density"].drop("crash_density")
+        print(f"\n  {city}:")
+        for col, r in corrs.sort_values(key=abs, ascending=False).items():
+            print(f"    {col:<28} {'+' if r>=0 else '-'}{abs(r):.4f}")
+
+    print(f"\n  Preview (top 5 by crash_density):")
+    pd.set_option("display.max_columns", None)
+    pd.set_option("display.width", 200)
+    print(gold.sort_values("crash_density", ascending=False).head(5).to_string(index=False))
+    print(f"\n- Done. -\n")
+    return gold
+
+
+# ── entry point ───────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build the Gold training table.")
-    parser.add_argument("--use-probe", action="store_true", help="Use probe hex features instead of zero-shot CLIP.")
+    parser = argparse.ArgumentParser(description="Build Gold training table(s).")
+    parser.add_argument("--city",       choices=["sarasota", "tampa"], default="sarasota")
+    parser.add_argument("--multicity",  action="store_true", help="Stack sarasota + tampa.")
+    parser.add_argument("--use-probe",  action="store_true", help="Use probe features (sarasota only).")
     args = parser.parse_args()
-    main(use_probe=args.use_probe)
+
+    if args.multicity:
+        main_multicity()
+    else:
+        main_single(city=args.city, use_probe=args.use_probe)
