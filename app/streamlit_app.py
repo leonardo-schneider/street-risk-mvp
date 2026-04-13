@@ -32,6 +32,8 @@ API_BASE       = os.getenv("API_BASE_URL", "https://street-risk-mvp.onrender.com
 
 # ── constants ─────────────────────────────────────────────────────────────────
 SARASOTA_CENTER = (27.3364, -82.5307)
+TAMPA_CENTER    = (27.9506, -82.4572)
+CITY_CENTERS    = {"Sarasota, FL": SARASOTA_CENTER, "Tampa, FL": TAMPA_CENTER}
 TIER_COLORS     = {"High": "#d73027", "Medium": "#fee090", "Low": "#1a9850"}
 TIER_EMOJI      = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
 DEFAULT_ADDRESS = "1 N Tamiami Trail, Sarasota, FL"
@@ -68,7 +70,7 @@ RISK_EXPLANATION = {
     "High":    "This zone has significantly elevated crash activity — drive with extra caution.",
     "Medium":  "This zone has moderate crash risk, consistent with typical urban streets.",
     "Low":     "This zone has low crash density and appears relatively safe for drivers.",
-    "Unknown": "This location is outside our Sarasota coverage area.",
+    "Unknown": "This location is outside our Sarasota and Tampa coverage area.",
 }
 
 STREETVIEW_URL = (
@@ -331,8 +333,8 @@ def geocode_address(address: str):
 
 @st.cache_data(ttl=3600)
 def load_gold_cached():
-    """Load the Gold table for feature-value lookups (radar chart). Cached 1 h."""
-    gold_local = Path(__file__).parents[1] / "data" / "gold" / "training_table" / "sarasota_gold.parquet"
+    """Load the multi-city Gold table for feature-value lookups (radar chart). Cached 1 h."""
+    gold_local = Path(__file__).parents[1] / "data" / "gold" / "training_table" / "multicity_gold.parquet"
     if gold_local.exists():
         return pd.read_parquet(gold_local).set_index("h3_index")
     try:
@@ -343,7 +345,7 @@ def load_gold_cached():
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         )
         buf = _io.BytesIO()
-        s3.download_fileobj(S3_BUCKET, "gold/training_table/sarasota_gold.parquet", buf)
+        s3.download_fileobj(S3_BUCKET, "gold/training_table/multicity_gold.parquet", buf)
         buf.seek(0)
         return pd.read_parquet(buf).set_index("h3_index")
     except Exception:
@@ -436,8 +438,10 @@ def render_label_tab():
 
 # ── map builder ───────────────────────────────────────────────────────────────
 
-def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None) -> folium.Map:
-    m = folium.Map(location=SARASOTA_CENTER, zoom_start=13, tiles="CartoDB dark_matter")
+def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None,
+              map_center=None, zoom=13) -> folium.Map:
+    center = map_center if map_center else SARASOTA_CENTER
+    m = folium.Map(location=center, zoom_start=zoom, tiles="CartoDB dark_matter")
 
     if geojson:
         for feature in geojson.get("features", []):
@@ -447,6 +451,7 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
             tier    = props.get("risk_tier", "Low")
             density = props.get("crash_density", 0)
             h3idx   = props.get("h3_index", "")
+            city_lbl= props.get("city", "")
             color   = risk_color(score, tier)
 
             folium.GeoJson(
@@ -465,6 +470,7 @@ def build_map(geojson: dict, scored_lat=None, scored_lon=None, scored_data=None)
                 tooltip=folium.Tooltip(
                     f"<b>{tier} risk</b> &nbsp;|&nbsp; {score:.2f}<br>"
                     f"Density: {density:.1f} crashes/km²<br>"
+                    f"<span style='font-size:11px;color:#aaa'>{city_lbl.upper()}</span>&nbsp;"
                     f"<span style='font-size:11px;color:#888'>{h3idx}</span>",
                     sticky=False,
                 ),
@@ -725,7 +731,7 @@ def render_compare_tab():
             _score_address("cmp_addr_a", "cmp_data_a", "cmp_coords_a")
 
     with col_b:
-        st.text_input("Address B", value="301 Bird Key Dr, Sarasota, FL", key="cmp_addr_b")
+        st.text_input("Address B", value="700 N Ashley Dr, Tampa, FL", key="cmp_addr_b")
         if st.button("Score B", key="btn_score_b", type="primary", use_container_width=True):
             _score_address("cmp_addr_b", "cmp_data_b", "cmp_coords_b")
 
@@ -763,9 +769,18 @@ def render_compare_tab():
                 )
                 continue
 
-            tier = data.get("risk_tier", "Unknown")
+            tier      = data.get("risk_tier", "Unknown")
+            city_name = data.get("city", "")
             st.markdown(f"**Location {label}**")
             st.markdown(risk_badge(tier), unsafe_allow_html=True)
+            if city_name:
+                st.markdown(
+                    f'<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+                    f'font-size:0.65rem;font-weight:700;letter-spacing:2px;'
+                    f'text-transform:uppercase;color:rgba(240,240,250,0.38);'
+                    f'margin-top:6px;">{city_name.upper()}, FL</div>',
+                    unsafe_allow_html=True,
+                )
             st.write("")
 
             if tier == "Unknown":
@@ -878,7 +893,7 @@ st.markdown("""
     text-transform:uppercase;
     color:rgba(240,240,250,0.38);
     line-height:1;
-  ">MICRO-ZONE ROAD RISK INTELLIGENCE &mdash; SARASOTA, FL</div>
+  ">MICRO-ZONE ROAD RISK INTELLIGENCE &mdash; SARASOTA, FL + TAMPA, FL</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -890,7 +905,19 @@ with st.sidebar:
         font-size:0.62rem;font-weight:700;
         letter-spacing:2px;text-transform:uppercase;
         color:rgba(240,240,250,0.35);
-        margin-bottom:14px;margin-top:6px;
+        margin-bottom:10px;margin-top:6px;
+    ">CITY</div>
+    """, unsafe_allow_html=True)
+    selected_city = st.selectbox("City", ["Sarasota, FL", "Tampa, FL"], label_visibility="collapsed")
+
+    st.markdown("<hr style='border-color:rgba(240,240,250,0.08);margin:14px 0;'>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="
+        font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+        font-size:0.62rem;font-weight:700;
+        letter-spacing:2px;text-transform:uppercase;
+        color:rgba(240,240,250,0.35);
+        margin-bottom:14px;
     ">SCORE A LOCATION</div>
     """, unsafe_allow_html=True)
     address = st.text_input("Address", value=DEFAULT_ADDRESS)
@@ -909,8 +936,16 @@ with st.sidebar:
 
     stats = fetch_stats()
     if stats:
-        st.metric("Hexagons scored", stats["total_hexagons"])
-        st.metric("Mean crash density", f"{stats['mean_crash_density']:.1f} /km²")
+        # Show stats for selected city
+        city_key = selected_city.split(",")[0].lower()  # "sarasota" or "tampa"
+        by_city  = stats.get("by_city", {})
+        city_stats = by_city.get(city_key, {})
+
+        n_hexes      = city_stats.get("hexagons",          stats["total_hexagons"])
+        mean_density = city_stats.get("mean_crash_density", stats["mean_crash_density"])
+
+        st.metric("Hexagons scored", n_hexes)
+        st.metric("Mean crash density", f"{mean_density:.1f} /km²")
         tier_dist = stats.get("risk_tier_distribution", {})
         if tier_dist:
             order  = ["High", "Medium", "Low"]
@@ -981,15 +1016,21 @@ with tab_map:
     col_map, col_card = st.columns([6, 4])
 
     with col_map:
-        st.markdown("""<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
-            font-size:0.62rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;
-            color:rgba(240,240,250,0.35);margin-bottom:8px;">RISK MAP — SARASOTA, FL</div>""",
-            unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+            f'font-size:0.62rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;'
+            f'color:rgba(240,240,250,0.35);margin-bottom:8px;">'
+            f'RISK MAP — {selected_city.upper()}</div>',
+            unsafe_allow_html=True,
+        )
+        map_center = CITY_CENTERS.get(selected_city, SARASOTA_CENTER)
         m = build_map(
             geojson,
             scored_lat=st.session_state.score_lat,
             scored_lon=st.session_state.score_lon,
             scored_data=st.session_state.score_data,
+            map_center=map_center,
+            zoom=13,
         )
         st_folium(m, width=None, height=520, returned_objects=[])
 
@@ -1016,7 +1057,16 @@ with tab_map:
                 st.warning(data.get("message", "No data available for this location."))
                 st.caption(f"H3 index: {data.get('h3_index','')}")
             else:
+                city_name = data.get("city", "")
                 st.markdown(risk_badge(tier), unsafe_allow_html=True)
+                if city_name:
+                    st.markdown(
+                        f'<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+                        f'font-size:0.65rem;font-weight:700;letter-spacing:2px;'
+                        f'text-transform:uppercase;color:rgba(240,240,250,0.38);'
+                        f'margin-top:6px;">{city_name.upper()}, FL</div>',
+                        unsafe_allow_html=True,
+                    )
                 st.write("")
                 m1, m2 = st.columns(2)
                 m1.metric("Crashes / km²", f"{data.get('crash_density', 0):.1f}")
