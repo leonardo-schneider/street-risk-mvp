@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 class PredictRequest(BaseModel):
     lat: float = Field(..., description="Latitude of the location", ge=-90, le=90)
     lon: float = Field(..., description="Longitude of the location", ge=-180, le=180)
+    city: Optional[str] = Field(None, description="City override: 'sarasota' or 'tampa'. Auto-detected if omitted.")
 
 
 # ── responses ─────────────────────────────────────────────────────────────────
@@ -28,6 +29,7 @@ class HexCenter(BaseModel):
 
 class HexRiskResponse(BaseModel):
     h3_index: str
+    city: Optional[str] = Field(None, description="City this hexagon belongs to")
     crash_density: float
     risk_tier: str
     risk_score_normalized: float = Field(..., description="Min-max scaled crash density, 0-1")
@@ -40,6 +42,7 @@ class HexRiskResponse(BaseModel):
 
 class HexUnknownResponse(BaseModel):
     h3_index: str
+    city: Optional[str] = None
     risk_tier: str
     message: str
 
@@ -67,8 +70,14 @@ class TopHex(BaseModel):
     risk_score_normalized: float
 
 
+class CityStats(BaseModel):
+    hexagons: int
+    mean_crash_density: float
+
+
 class StatsResponse(BaseModel):
     total_hexagons: int
+    by_city: Dict[str, CityStats]
     mean_crash_density: float
     risk_tier_distribution: Dict[str, int]
     top_5_highest_risk_hexagons: List[TopHex]
