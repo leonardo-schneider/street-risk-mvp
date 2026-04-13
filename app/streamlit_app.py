@@ -9,7 +9,6 @@ Run with:
     streamlit run app/streamlit_app.py
 """
 
-import csv
 import io as _io
 import os
 from pathlib import Path
@@ -78,10 +77,7 @@ STREETVIEW_URL = (
     "?size=600x300&location={lat},{lon}&fov=90&pitch=0&key={key}"
 )
 
-LABELS_CSV    = Path(__file__).parents[1] / "data" / "labels" / "image_labels.csv"
-MANIFEST_PATH = Path(__file__).parents[1] / "data" / "bronze" / "image_manifest.csv"
-S3_BUCKET     = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
-IS_LOCAL      = os.getenv("RENDER", "").lower() != "true"
+S3_BUCKET = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -372,90 +368,6 @@ def load_gold_cached():
         return pd.read_parquet(buf).set_index("h3_index")
     except Exception:
         return None
-
-
-@st.cache_data(ttl=3600)
-def fetch_s3_image_bytes(s3_key: str) -> bytes:
-    """Download image bytes from S3 Bronze. Cached per key."""
-    s3 = boto3.client(
-        "s3",
-        region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    )
-    buf = _io.BytesIO()
-    s3.download_fileobj(S3_BUCKET, s3_key, buf)
-    return buf.getvalue()
-
-
-def load_labels() -> dict:
-    """Return {s3_key: label} from labels CSV. Returns empty dict if file missing."""
-    if not LABELS_CSV.exists():
-        return {}
-    with open(LABELS_CSV, newline="") as f:
-        return {row["s3_key"]: row["label"] for row in csv.DictReader(f)}
-
-
-def save_label(s3_key: str, label: str):
-    """Append or overwrite a single label in the CSV."""
-    existing = load_labels()
-    existing[s3_key] = label
-    LABELS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with open(LABELS_CSV, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["s3_key", "label"])
-        writer.writeheader()
-        for key, lbl in existing.items():
-            writer.writerow({"s3_key": key, "label": lbl})
-
-
-def render_label_tab():
-    """Labeling UI — local-only. Hidden on Streamlit Cloud (RENDER=true)."""
-    st.subheader("Label Images")
-    st.caption("Mark each Street View image as High Risk or Low Risk to train the CLIP probe.")
-
-    if not MANIFEST_PATH.exists():
-        st.warning("Manifest not found at data/bronze/image_manifest.csv — run the ingestion pipeline first.")
-        return
-
-    manifest = pd.read_csv(MANIFEST_PATH)
-    manifest = manifest[manifest["status"] == "ok"].reset_index(drop=True)
-    labels   = load_labels()
-
-    labeled_keys   = set(labels.keys())
-    unlabeled      = manifest[~manifest["s3_key"].isin(labeled_keys)].reset_index(drop=True)
-    n_total        = len(manifest)
-    n_labeled      = len(labeled_keys)
-
-    st.progress(n_labeled / n_total, text=f"{n_labeled} / {n_total} images labeled")
-
-    if unlabeled.empty:
-        st.success("All images labeled! Run `python model/train_clip_probe.py` to train the probe.")
-        return
-
-    # Show the first unlabeled image
-    row     = unlabeled.iloc[0]
-    s3_key  = row["s3_key"]
-    h3_idx  = row["h3_index"]
-
-    st.markdown(f"**Image {n_labeled + 1} of {n_total}** — hex `{h3_idx}`")
-
-    try:
-        img_bytes = fetch_s3_image_bytes(s3_key)
-        st.image(img_bytes, use_container_width=True)
-    except Exception as e:
-        st.error(f"Could not load image from S3: {e}")
-        if st.button("Skip this image"):
-            save_label(s3_key, "skip")
-            st.rerun()
-        return
-
-    col_hi, col_lo = st.columns(2)
-    if col_hi.button("🔴 High Risk", use_container_width=True, type="primary"):
-        save_label(s3_key, "high")
-        st.rerun()
-    if col_lo.button("🟢 Low Risk", use_container_width=True):
-        save_label(s3_key, "low")
-        st.rerun()
 
 
 # ── map builder ───────────────────────────────────────────────────────────────
@@ -1029,10 +941,7 @@ if score_btn and address.strip():
 geojson = fetch_map_data()
 
 # Tabs
-if IS_LOCAL:
-    tab_map, tab_compare, tab_label = st.tabs(["Risk Map", "Compare", "Label Images"])
-else:
-    tab_map, tab_compare = st.tabs(["Risk Map", "Compare"])
+tab_map, tab_compare = st.tabs(["RISK MAP", "COMPARE"])
 
 with tab_map:
     col_map, col_card = st.columns([6, 4])
@@ -1110,7 +1019,3 @@ with tab_map:
 
 with tab_compare:
     render_compare_tab()
-
-if IS_LOCAL:
-    with tab_label:
-        render_label_tab()
