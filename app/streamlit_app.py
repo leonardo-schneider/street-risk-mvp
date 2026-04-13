@@ -85,9 +85,10 @@ IS_LOCAL      = os.getenv("RENDER", "").lower() != "true"
 
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Street Risk — Sarasota Zone Risk Scorer",
-    layout="wide",
+    page_title="Street Risk",
     page_icon="🛣️",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ── SpaceX design system ──────────────────────────────────────────────────────
@@ -273,6 +274,27 @@ hr {
 footer { visibility: hidden; }
 [data-testid="stToolbar"] { display: none; }
 .stDeployButton { display: none; }
+
+/* Fix sidebar toggle — hide broken text button, style native collapse control */
+button[kind="header"] {
+    display: none !important;
+}
+
+section[data-testid="stSidebar"] > div:first-child {
+    padding-top: 1rem;
+}
+
+[data-testid="collapsedControl"] {
+    background-color: #1a1a1a !important;
+    border: 1px solid #333 !important;
+    border-radius: 0 !important;
+    color: #ffffff !important;
+}
+
+[data-testid="collapsedControl"]:hover {
+    background-color: #333 !important;
+    border-color: #ffffff !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
