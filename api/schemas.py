@@ -19,6 +19,7 @@ class PredictRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     model: str
+    model_version: str
     city: str
 
 
