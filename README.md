@@ -224,6 +224,16 @@ that gradient boosting exploits more effectively than a compressed scalar.
 
 ---
 
+### NASA Black Marble nighttime lights
+Extracted VNP46A2 radiance per hexagon. Spearman correlation 
+with crash_density = 0.39, but 79% of urban hexagons saturate 
+at max intensity — insufficient within-city variance at 5km 
+resolution vs H3 res-9 (~350m). Useful for cross-city 
+differentiation but discarded for within-city model.
+Script preserved at pipeline/features/extract_nightlight_features.py
+
+---
+
 ## Future Work
 
 - ~~Zero-shot transfer to Tampa~~ — Done (Spearman 0.692)
