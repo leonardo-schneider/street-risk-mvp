@@ -48,6 +48,10 @@ POI_COLS = [
     "gas_stations_count", "fast_food_count", "traffic_signals_count",
 ]
 
+AADT_COLS = [
+    "aadt_mean", "aadt_max", "aadt_segment_count",
+]
+
 BASE_COLS = [
     "h3_index",
     "crash_density", "crash_count", "injury_rate",
@@ -64,6 +68,17 @@ MULTICITY_COLS = [
     "road_type_primary", "speed_limit_mean", "lanes_mean",
     "dist_to_intersection_mean", "point_count",
     *POI_COLS,
+    "risk_tier",
+]
+
+MULTICITY_V2_COLS = [
+    "h3_index", "city",
+    "crash_density", "crash_count", "injury_rate",
+    *CLIP_COLS,
+    "road_type_primary", "speed_limit_mean", "lanes_mean",
+    "dist_to_intersection_mean", "point_count",
+    *POI_COLS,
+    *AADT_COLS,
     "risk_tier",
 ]
 
@@ -210,7 +225,7 @@ def print_summary(gold: pd.DataFrame, p33: float, p66: float, final_cols: list, 
     num_cols = [c for c in gold.columns
                 if c.startswith("clip_") or c in
                 ["speed_limit_mean","lanes_mean","dist_to_intersection_mean","point_count",
-                 *POI_COLS]]
+                 *POI_COLS, *AADT_COLS]]
     num_cols = [c for c in num_cols if c in gold.columns]
     corrs = gold[num_cols + ["crash_density"]].corr()["crash_density"].drop("crash_density")
     for col, r in corrs.sort_values(key=abs, ascending=False).head(15).items():
@@ -281,12 +296,15 @@ def main_single(city: str = "sarasota", use_probe: bool = False):
 
 # ── multi-city main ───────────────────────────────────────────────────────────
 
-def main_multicity():
-    data = ROOT / "data"
-    print("\n- Building Multi-city Gold table (Sarasota + Tampa) -\n")
+def main_multicity(include_aadt: bool = False):
+    data   = ROOT / "data"
+    v2     = include_aadt
+    label  = "multicity_v2 (with AADT)" if v2 else "multicity"
+    print(f"\n- Building Multi-city Gold table ({label}) -\n")
     cities = ["sarasota", "tampa"]
 
-    print("Step 1/4  Building per-city gold tables ...")
+    n_steps = 5 if v2 else 4
+    print(f"Step 1/{n_steps}  Building per-city gold tables ...")
     city_golds = []
     for city in cities:
         print(f"\n  [{city}]")
@@ -294,36 +312,75 @@ def main_multicity():
         city_golds.append(g)
         print(f"  [ok] {city}: {len(g):,} hexagons")
 
-    print("\nStep 2/4  Stacking cities ...")
+    print(f"\nStep 2/{n_steps}  Stacking cities ...")
     gold = pd.concat(city_golds, ignore_index=True)
     print(f"  [ok] Combined: {len(gold):,} hexagons")
 
-    print("\nStep 3/4  Adding risk_tier (cross-city quantiles) ...")
+    if v2:
+        print(f"\nStep 3/{n_steps}  Joining AADT features ...")
+        aadt_frames = []
+        for city in cities:
+            aadt_path = data / "silver" / "aadt" / f"{city}_aadt_hex.parquet"
+            if not aadt_path.exists():
+                raise FileNotFoundError(
+                    f"AADT Silver file not found: {aadt_path}\n"
+                    f"Run: python pipeline/features/extract_aadt_features.py --city {city}"
+                )
+            af = pd.read_parquet(aadt_path)
+            aadt_frames.append(af)
+            print(f"  [ok] {city}: {len(af):,} AADT rows loaded")
+
+        aadt_all = pd.concat(aadt_frames, ignore_index=True)
+        gold = gold.merge(aadt_all[["h3_index"] + AADT_COLS], on="h3_index", how="left")
+        for col in AADT_COLS:
+            n_nan = gold[col].isna().sum()
+            if n_nan:
+                print(f"  [fill] {col}: {n_nan} NaN -> 0")
+            gold[col] = gold[col].fillna(0.0)
+        # aadt_segment_count should be int
+        gold["aadt_segment_count"] = gold["aadt_segment_count"].astype(int)
+        print(f"  [ok] AADT join complete — NaN check: "
+              f"{gold[AADT_COLS].isna().sum().sum()} remaining NaN")
+
+        step_risk = 4
+    else:
+        step_risk = 3
+
+    print(f"\nStep {step_risk}/{n_steps}  Adding risk_tier (cross-city quantiles) ...")
     gold, p33, p66 = add_risk_tier(gold)
 
-    # Enforce column order, keep only columns that exist
-    final_cols = [c for c in MULTICITY_COLS if c in gold.columns]
-    gold = gold[final_cols]
+    # Enforce column order
+    col_list   = MULTICITY_V2_COLS if v2 else MULTICITY_COLS
+    final_cols = [c for c in col_list if c in gold.columns]
+    gold       = gold[final_cols]
 
-    # Confirm zero NaNs
+    # Zero-NaN confirmation
     nan_total = gold.isna().sum().sum()
     print(f"  [ok] NaN count in final table: {nan_total}")
+    print(f"  [ok] Feature count: {len(final_cols)} columns  "
+          f"({len([c for c in final_cols if c not in ['h3_index','city','risk_tier']])} features + 3 meta)")
 
-    print("\nStep 4/4  Saving ...")
-    gold_local = data / "gold" / "training_table" / "multicity_gold.parquet"
-    gold_s3key = "gold/training_table/multicity_gold.parquet"
+    step_save = step_risk + 1
+    print(f"\nStep {step_save}/{n_steps}  Saving ...")
+    fname      = "multicity_gold_v2.parquet" if v2 else "multicity_gold.parquet"
+    gold_s3key = f"gold/training_table/{fname}"
+    gold_local = data / "gold" / "training_table" / fname
     save_parquet(gold, gold_local)
     upload(gold_local, BUCKET, gold_s3key)
 
-    print_summary(gold, p33, p66, final_cols, label="multicity")
+    print_summary(gold, p33, p66, final_cols, label=label)
 
-    print(f"\n  POI feature correlations with crash_density by city:")
+    extra_cols = POI_COLS + (AADT_COLS if v2 else [])
+    print(f"\n  Feature correlations with crash_density by city:")
     for city in cities:
         grp = gold[gold["city"] == city]
-        corrs = grp[[c for c in POI_COLS if c in grp.columns] + ["crash_density"]].corr()["crash_density"].drop("crash_density")
+        cols_avail = [c for c in extra_cols if c in grp.columns]
+        corrs = (grp[cols_avail + ["crash_density"]]
+                 .corr()["crash_density"]
+                 .drop("crash_density"))
         print(f"\n  {city}:")
         for col, r in corrs.sort_values(key=abs, ascending=False).items():
-            print(f"    {col:<28} {'+' if r>=0 else '-'}{abs(r):.4f}")
+            print(f"    {col:<32} {'+' if r>=0 else '-'}{abs(r):.4f}")
 
     print(f"\n  Preview (top 5 by crash_density):")
     pd.set_option("display.max_columns", None)
@@ -339,10 +396,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build Gold training table(s).")
     parser.add_argument("--city",       choices=["sarasota", "tampa"], default="sarasota")
     parser.add_argument("--multicity",  action="store_true", help="Stack sarasota + tampa.")
+    parser.add_argument("--aadt",       action="store_true", help="Include AADT features (requires --multicity). Outputs multicity_gold_v2.parquet.")
     parser.add_argument("--use-probe",  action="store_true", help="Use probe features (sarasota only).")
     args = parser.parse_args()
 
     if args.multicity:
-        main_multicity()
+        main_multicity(include_aadt=args.aadt)
     else:
         main_single(city=args.city, use_probe=args.use_probe)
