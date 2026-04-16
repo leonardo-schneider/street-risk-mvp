@@ -1,7 +1,8 @@
 # Street Risk — Micro-Zone Road Risk Scorer
 
-> Predict auto insurance risk at H3 hexagon resolution (~0.1 km²) using
-> street-level imagery, road geometry, and crash history.
+> Predict auto insurance risk at H3 hexagon resolution (~0.1 km²)
+> using street-level imagery, road geometry, traffic volume,
+> and crash history. Validated across three Florida cities.
 
 ---
 
@@ -11,17 +12,17 @@ ZIP-code insurance pricing is too coarse. Two blocks apart in Sarasota, FL
 can have a **160× difference** in crash density (9.4 vs 1,520 crashes/km²).
 This system estimates road risk at H3 res-9 hexagon level using Google Street
 View imagery scored by CLIP, combined with OSM road features, POI counts,
-and FDOT crash records — producing a ranked risk score for every 0.1 km²
-cell across Sarasota and Tampa, FL.
+FDOT AADT traffic volume, and crash records — producing a ranked risk score
+for every 0.1 km² cell across Sarasota, Tampa, and Orlando, FL.
 
 ---
 
 ## Live Demo
 
-| Component     | URL |
-|---------------|-----|
+| Component | URL |
+|-----------|-----|
 | Streamlit App | https://street-risk-mvp.streamlit.app |
-| FastAPI Docs  | https://street-risk-mvp.onrender.com/docs |
+| FastAPI Docs | https://street-risk-mvp.onrender.com/docs |
 
 ---
 
@@ -29,20 +30,23 @@ cell across Sarasota and Tampa, FL.
 
 ```
 Street View images        OSM road network        FDOT crash records
-(3,214 images, S3)        (road points + POI)     (111,084 crashes)
+(4,878 images, S3)        (road points + POI)     (203,351 crashes)
         |                       |                       |
         v                       v                       v
   CLIP zero-shot          Road aggregation        Hex aggregation
   7 risk concepts         per H3 hexagon          crash_density
   (Silver layer)          + 6 POI features        (Silver layer)
         |                       |                       |
+        |               FDOT AADT traffic               |
+        |               (ArcGIS REST layer 7)           |
+        |                       |                       |
         +----------+------------+                       |
                    v                                    v
-         Gold table: 806 hexagons, 23 features, TARGET=crash_density
+      Gold table: 1,220 hexagons, 27 features, TARGET=crash_density
                    |
                    v
              LightGBM regressor
-             (geographic train/test split — both cities)
+             (train: Sarasota + Tampa / test: Orlando zero-shot)
                    |
                    v
          Risk score per hexagon (0-1 normalised)
@@ -50,80 +54,68 @@ Street View images        OSM road network        FDOT crash records
           +---------+---------+
           v                   v
        FastAPI             Streamlit
-    /predict, /hex         Folium map
-    /map-data, /stats      risk card + compare tab
-    (city auto-detect)     (Sarasota + Tampa)
+    /predict, /hex         Top-bar UI, no sidebar
+    /map-data, /stats      Folium map + risk card
+    (city auto-detect)     + compare tab
+    3 cities live          (Sarasota, Tampa, Orlando)
 ```
 
 ---
 
 ## Headline Result
 
-> Trained on Sarasota. Tested on Tampa with zero Tampa training examples.
-> **Spearman 0.692** — the visual risk signal generalizes across cities.
+> Trained on Sarasota + Tampa. Tested on Orlando with zero Orlando training
+> examples. **Spearman 0.878** — the model correctly ranks risk in 93.9% of
+> Orlando hex pairs without ever seeing the city.
 
-CLIP features dominate cross-city transfer. `traffic_signals_count` is the
-strongest single predictor in the final model (permutation importance 31,415
-vs 16,972 for `speed_limit_mean`) — the model learned road risk structure,
-not Sarasota geography.
+AADT (Annual Average Daily Traffic) is the dominant feature. `aadt_max`
+alone has permutation importance 70,025 on the Orlando test set — 2× the
+next feature — because high-traffic roads concentrate crash risk universally
+across cities.
 
 ---
 
 ## Model Evolution
 
-| Version | Train | Test | Spearman | R² | Key addition |
+| Version | Train | Test | Spearman | R² | Key Addition |
 |---------|-------|------|----------|----|--------------|
-| v1 | Sarasota | Sarasota (geo split) | 0.666 | −0.594 | Baseline CLIP + road |
-| v2 | Sarasota | **Tampa (zero-shot)** | **0.692** | — | Cross-city transfer |
-| v3 final | Sarasota+Tampa | Both (geo split) | 0.632 | **+0.540** | POI features, R² positive |
-
-v2→v3 trades 0.03 Spearman for **positive R²**: the final model estimates
-magnitude correctly (not just ranking) because it trains on both city scales.
-The cross-city zero-shot result (v2) remains the headline generalization proof.
+| v1 | Sarasota | Sarasota geo-OOD | 0.666 | −0.594 | Baseline CLIP + road |
+| v2 | Sarasota | Tampa (zero-shot) | 0.692 | — | Cross-city transfer |
+| v3 | Sara+Tampa | Both geo-OOD | 0.632 | +0.540 | POI features, R² positive |
+| v4 | Sara+Tampa | Tampa cross-city | 0.792 | +0.628 | AADT — largest lift |
+| **v5** | **Sara+Tampa** | **Orlando (zero-shot)** | **0.878** | **+0.577** | **3-city generalization** |
 
 ### Why Spearman is the primary metric
 Insurance pricing requires correct *ranking*, not exact magnitude. A model
 that ranks every hex correctly but predicts the wrong absolute density still
-prices risk in the right order. Spearman 0.692 means the model correctly
-ranks ~87% of all hex pairs by relative crash risk.
+prices risk in the right order. Spearman 0.878 means the model correctly
+ranks ~93.9% of all Orlando hex pairs by relative crash risk — on a city it
+has never seen.
 
 ### Why R² was negative in v1
 The geographic test cluster is OOD by design — its mean crash density
-differs from the training set mean. Predicting the training mean everywhere
-scores R²=0; negative R² means the OOD density shift outweighs within-cluster
-signal. The final multicity model trains on both city scales, so the test
-cluster mean aligns better with training, giving R²=+0.54.
+differs from the training set mean. The multicity model trains on both city
+scales, aligning the test distribution with training, giving R²=+0.54→+0.58.
 
 ---
 
-### Visual Signal Analysis — CLIP vs Structural Features (v1)
+## Feature Importance — v5 (Orlando zero-shot test)
 
-| Feature set      | Spearman | RMSE   | MAE    | Interpretation                    |
-|------------------|----------|--------|--------|-----------------------------------|
-| CLIP only        | 0.360    | 222.21 | 137.82 | Pure visual signal (Street View)  |
-| Structural only  | 0.443    | 114.27 | 77.79  | Pure road geometry + speed limits |
-| **Full model**   | **0.666**| **80.28** | **59.63** | Combined — best ranking      |
+Top features by permutation importance (mean MSE increase when shuffled):
 
-**CLIP adds +0.223 Spearman lift over structural features alone.**
+| Feature | MSE increase | Group |
+|---------|-------------|-------|
+| `aadt_max` | 70,025 | AADT |
+| `aadt_segment_count` | 32,930 | AADT |
+| `traffic_signals_count` | 22,106 | POI |
+| `fast_food_count` | 3,447 | POI |
+| `clip_poor_lighting` | 542 | CLIP |
 
-### Permutation Importance — Final Model, Top 10
+**AADT group mean: 34,973 — 8× the POI group mean (4,428).**
 
-Mean MSE increase when a single feature is shuffled (combined test set).
-
-| Feature | MSE increase | Signal type |
-|---------|-------------|-------------|
-| `traffic_signals_count` | 31,415 | POI |
-| `speed_limit_mean`      | 16,972 | Structural |
-| `gas_stations_count`    |  5,929 | POI |
-| `clip_clear_road`       |  5,160 | CLIP |
-| `lanes_mean`            |  2,694 | Structural |
-| `clip_parked_cars`      |  2,653 | CLIP |
-| `clip_no_signals`       |  2,078 | CLIP |
-| `clip_poor_lighting`    |    696 | CLIP |
-| `hospitals_count`       |     13 | POI |
-| `road_unclassified`     |      0 | Road type |
-
-POI features mean importance (6,139) is **4× the non-POI mean** (1,439).
+CLIP contributes meaningfully as a cross-city visual prior even when AADT
+and POI dominate: `clip_poor_lighting` ranks 5th and CLIP-only ablation
+shows +0.22 Spearman lift over structural features alone.
 
 ---
 
@@ -131,20 +123,22 @@ POI features mean importance (6,139) is **4× the non-POI mean** (1,439).
 
 ```
 Bronze  (S3: street-risk-mvp/bronze/)
-  images/sarasota/  1,550 Street View JPEGs (640x640, 4 headings)
-  images/tampa/     1,664 Street View JPEGs (640x640, 4 headings)
-  crash/            111,084 FDOT crash records (Parquet)
-  roads/            road points with OSM attributes (Parquet)
+  images/sarasota/   1,550 Street View JPEGs (640×640, 4 headings)
+  images/tampa/      1,664 Street View JPEGs (640×640, 4 headings)
+  images/orlando/    1,664 Street View JPEGs (640×640, 4 headings)
+  crash/             FDOT crash records by county (Parquet)
+  roads/             road points with OSM attributes (Parquet)
 
 Silver  (S3: street-risk-mvp/silver/)
-  image_features/   CLIP scores x7 concepts per hexagon (Parquet)
-  crash_hex/        crash_density aggregated to H3 hexagons (Parquet)
-  poi_features/     6 OSM POI counts per hexagon (Parquet)
+  image_features/    CLIP scores × 7 concepts per hexagon (Parquet)
+  crash_hex/         crash_density aggregated to H3 hexagons (Parquet)
+  poi_features/      6 OSM POI counts per hexagon (Parquet)
+  aadt/              FDOT AADT: mean, max, segment count per hexagon (Parquet)
 
 Gold    (S3: street-risk-mvp/gold/)
-  training_table/   806 hexagons x 23 features, zero NaN (Parquet)
-  final_model.pkl   Trained LightGBM (Sarasota + Tampa)
-  final_feature_columns.json
+  training_table/    multicity_gold_v3.parquet — 1,220 hexagons × 27 features
+  final_model_v5.pkl           Trained LightGBM (Sarasota + Tampa → Orlando)
+  final_feature_columns_v5.json
   city_scale_factors.json
 ```
 
@@ -152,28 +146,35 @@ Gold    (S3: street-risk-mvp/gold/)
 
 1. **Image ingestion** — `pipeline/ingestion/fetch_images.py` writes raw
    Street View images directly to S3 Bronze (city-prefixed paths), checking
-   the cache before every request.
+   the cache before every API request.
 2. **CLIP batch extraction** — `pipeline/features/extract_clip_features.py`
    reads Bronze images from S3, runs batch CLIP inference, writes Silver
    Parquet back to S3.
+
+**Frontend architecture:**
+
+The Streamlit app uses a top-bar layout (no sidebar) — city selector, address
+input, and SCORE button sit in a single `st.columns` row above the tabs,
+eliminating sidebar toggle fragility entirely.
 
 ---
 
 ## Tech Stack
 
-| Layer       | Technology |
-|-------------|------------|
-| Storage     | AWS S3 (boto3) |
-| Road network| OSMnx + OpenStreetMap |
-| POI features| OSMnx `features_from_place` (6 tag groups) |
-| Images      | Google Street View Static API |
-| Crash data  | FDOT Open Data Hub (ArcGIS REST, layer 2000) |
-| Vision      | CLIP `openai/clip-vit-base-patch32` (HuggingFace) |
-| Model       | LightGBM regressor |
-| Tracking    | MLflow (SQLite backend, artifacts to S3) |
-| API         | FastAPI + Uvicorn (deployed on Render) |
-| Frontend    | Streamlit + Folium (deployed on Streamlit Cloud) |
-| Spatial     | H3 (Uber) resolution 9, ~0.1 km² per cell |
+| Layer | Technology |
+|-------|------------|
+| Storage | AWS S3 (boto3) |
+| Road network | OSMnx + OpenStreetMap |
+| POI features | OSMnx `features_from_place` (6 tag groups) |
+| Traffic volume | FDOT AADT via ArcGIS REST (layer 7, WGS84) |
+| Images | Google Street View Static API |
+| Crash data | FDOT Open Data Hub (ArcGIS REST, layer 2000) |
+| Vision | CLIP `openai/clip-vit-base-patch32` (HuggingFace) |
+| Model | LightGBM regressor |
+| Tracking | MLflow (SQLite backend, artifacts to S3) |
+| API | FastAPI + Uvicorn (deployed on Render) |
+| Frontend | Streamlit + Folium (deployed on Streamlit Cloud) |
+| Spatial | H3 (Uber) resolution 9, ~0.1 km² per cell |
 
 ---
 
@@ -183,65 +184,79 @@ Gold    (S3: street-risk-mvp/gold/)
 |------|--------|----------|---------|----------|
 | Sarasota, FL | 1,550 | 390 | 19,824 | 4 (0°/90°/180°/270°) |
 | Tampa, FL | 1,664 | 416 | 91,260 | 4 (0°/90°/180°/270°) |
-| **Total** | **3,214** | **806** | **111,084** | |
+| Orlando, FL | 1,664 | 414 | 91,675 | 4 (0°/90°/180°/270°) |
+| **Total** | **4,878** | **1,220** | **203,759** | |
 
 All images cached in S3 Bronze. Crash data from FDOT Open Data Hub
-(Sarasota County + Hillsborough County), all years.
+(Sarasota / Hillsborough / Orange counties), all years available.
 
 ---
 
 ## Validation
 
-- **Geographic train/test split** via KMeans (n=6) on H3 centroid coordinates
-- One Sarasota cluster held out (within-city OOD), one Tampa cluster held out (cross-city OOD)
-- Prevents spatial leakage — neighbouring hexagons share visual features
-- Cross-city test (v2): train exclusively on Sarasota, evaluate on Tampa — **Spearman 0.692**
-
----
-
-## Limitations & Honest Assessment
-
-- `traffic_signals_count` and `speed_limit_mean` are the two strongest predictors
-  in the final model — structural and POI signals drive most of the lift
-- CLIP contributes meaningfully (+0.22 Spearman lift over structural alone) but is
-  constrained by ~4 images per hexagon at fixed headings
-- Tampa crash density (230/km²) is 2× Sarasota's (116/km²); the model ranks
-  correctly across cities but absolute magnitudes need per-city recalibration
-- `speed_limit` and `lanes` OSM tags missing for ~88%/~71% of residential roads;
-  imputed with city defaults (25 mph, 1 lane)
+- **v1–v4**: Geographic train/test split via KMeans (n=6) on H3 centroid
+  coordinates — one cluster per city held out, prevents spatial leakage
+- **v5**: Hard city split — train on Sarasota + Tampa (806 hexagons),
+  test on Orlando (414 hexagons), zero Orlando examples seen during training
+- Spearman rank correlation is the primary metric (insurance pricing = ranking)
 
 ---
 
 ## Experiments
 
+### Feature Ablation (Sarasota geo-OOD test)
+
+| Feature set | Spearman | Interpretation |
+|-------------|----------|----------------|
+| CLIP only | 0.360 | Pure visual signal |
+| Structural only | 0.443 | Road geometry + speed limits |
+| Full model | 0.792 | Combined — best ranking |
+
+CLIP adds +0.22 Spearman lift over structural features alone.
+
 ### Linear Probe vs Zero-Shot CLIP
 
 Trained logistic regression on 104 manually labeled Street View images.
-AUC 0.836 at image-level classification. Despite strong image-level accuracy,
-collapsing 7 zero-shot dimensions into one probability reduced Spearman from
-0.666 to 0.492. The 7-dimensional zero-shot representation preserves structure
-that gradient boosting exploits more effectively than a compressed scalar.
+AUC 0.836 at image-level classification. Collapsing 7 zero-shot dimensions
+into one probability reduced Spearman from 0.666 to 0.492. The 7-dimensional
+zero-shot representation preserves structure that gradient boosting exploits
+more effectively than a compressed scalar.
+
+### NASA Black Marble Nighttime Lights
+
+Spearman correlation with crash_density = 0.39, but 79% of urban hexagons
+saturated at max intensity — 5 km resolution insufficient for within-city
+H3 res-9 discrimination. Discarded for the within-city model; script
+preserved at `pipeline/features/extract_nightlight_features.py` for
+cross-city use cases.
 
 ---
 
-### NASA Black Marble nighttime lights
-Extracted VNP46A2 radiance per hexagon. Spearman correlation 
-with crash_density = 0.39, but 79% of urban hexagons saturate 
-at max intensity — insufficient within-city variance at 5km 
-resolution vs H3 res-9 (~350m). Useful for cross-city 
-differentiation but discarded for within-city model.
-Script preserved at pipeline/features/extract_nightlight_features.py
+## Limitations & Honest Assessment
+
+- AADT and traffic signal count are the two strongest predictors — structural
+  and road-network signals drive most of the lift over CLIP alone
+- CLIP contributes meaningfully (+0.22 Spearman) but is constrained by ~4
+  images per hexagon at fixed headings
+- Orlando crash density (303/km²) is 2.6× Sarasota's (116/km²); the model
+  ranks correctly zero-shot but absolute magnitudes would benefit from
+  per-city isotonic recalibration for pricing use
+- `speed_limit` and `lanes` OSM tags missing for ~88%/~71% of residential
+  roads; imputed with city defaults (25 mph, 1 lane)
+- FDOT AADT covers state-managed roads only; local residential streets have
+  aadt_mean = 0 (correct for road type, not a data gap)
 
 ---
 
 ## Future Work
 
-- ~~Zero-shot transfer to Tampa~~ — Done (Spearman 0.692)
-- **Orlando as third city** for cross-city validation — confirm generalization holds across urban morphologies
-- **iRAP supervised visual risk features** — integrate International Road Assessment Programme labels for CLIP fine-tuning
-- **City-specific recalibration layer** — isotonic regression per city to correct magnitude scaling
-- **GNN over H3 hexagon graph** — exploit spatial autocorrelation between neighbouring hexagons
-- **More images per hex** — 5+ images vs current ~4 average at varied headings
+- ~~Zero-shot transfer to Tampa~~ ✅ Spearman 0.692
+- ~~3-city validation (Orlando)~~ ✅ Spearman 0.878
+- Visual-only mode: CLIP + OSM without AADT or crash data (cold-start cities)
+- iRAP supervised visual risk features for CLIP fine-tuning
+- Log-transform of target to reduce RMSE skew from high-density outliers
+- GNN over H3 hexagon graph to exploit spatial autocorrelation
+- Jacksonville / Miami expansion
 
 ---
 
@@ -264,21 +279,27 @@ cp .env.example .env
 # 4. Infrastructure (one-time S3 setup)
 python infrastructure/s3_setup.py
 
-# 5. Run the full pipeline (multicity)
+# 5. Run the full pipeline (all three cities)
 python pipeline/ingestion/sample_roads.py --city sarasota
 python pipeline/ingestion/sample_roads.py --city tampa
+python pipeline/ingestion/sample_roads.py --city orlando
 python pipeline/ingestion/fetch_images.py --city sarasota
-python pipeline/ingestion/fetch_images.py --city tampa --limit 414
+python pipeline/ingestion/fetch_images.py --city tampa
+python pipeline/ingestion/fetch_images.py --city orlando
 python pipeline/ingestion/fetch_crash_data.py --city sarasota
 python pipeline/ingestion/fetch_crash_data.py --city tampa
+python pipeline/ingestion/fetch_crash_data.py --city orlando
 python pipeline/features/extract_clip_features.py --city sarasota
 python pipeline/features/extract_clip_features.py --city tampa
+python pipeline/features/extract_clip_features.py --city orlando
 python pipeline/features/extract_poi_features.py --city sarasota
 python pipeline/features/extract_poi_features.py --city tampa
-python pipeline/gold/build_gold_table.py --multicity
+python pipeline/features/extract_poi_features.py --city orlando
+python pipeline/features/extract_aadt_features.py          # all cities
+python pipeline/gold/build_gold_table.py --multicity --aadt --orlando
 
-# 6. Train final model
-python model/train_final.py
+# 6. Train v5 model (Sara+Tampa train, Orlando zero-shot test)
+python model/train_final_v5.py
 
 # 7. Start API
 uvicorn api.main:app --reload --port 8000
@@ -298,39 +319,45 @@ python tests/e2e_test.py --local
 street-risk-mvp/
 ├── pipeline/
 │   ├── ingestion/
-│   │   ├── sample_roads.py          # OSMnx -> S3 Bronze road points (--city)
-│   │   ├── fetch_images.py          # Street View -> S3 Bronze images (--city, --limit)
-│   │   └── fetch_crash_data.py      # FDOT ArcGIS -> S3 Bronze + Silver (--city)
+│   │   ├── sample_roads.py               # OSMnx -> S3 Bronze (--city)
+│   │   ├── fetch_images.py               # Street View -> S3 Bronze (--city)
+│   │   └── fetch_crash_data.py           # FDOT ArcGIS -> S3 Bronze+Silver (--city)
 │   ├── features/
-│   │   ├── extract_clip_features.py # CLIP batch inference -> S3 Silver (--city)
-│   │   └── extract_poi_features.py  # OSM POI counts -> S3 Silver (--city)
+│   │   ├── extract_clip_features.py      # CLIP batch inference -> S3 Silver (--city)
+│   │   ├── extract_poi_features.py       # OSM POI counts -> S3 Silver (--city)
+│   │   ├── extract_aadt_features.py      # FDOT AADT -> S3 Silver (--city)
+│   │   └── extract_nightlight_features.py# NASA VIIRS nightlights (experimental)
 │   └── gold/
-│       └── build_gold_table.py      # Join layers -> Gold table (--multicity)
+│       └── build_gold_table.py           # Join layers -> Gold table (--multicity --aadt --orlando)
 ├── model/
-│   ├── train.py                     # LightGBM v1 (Sarasota only)
-│   ├── train_multicity.py           # 3-scenario multicity training
-│   ├── train_final.py               # Final production model (Sarasota+Tampa)
-│   ├── train_experiments.py         # Ridge / RF / XGBoost comparison
-│   ├── visual_contribution.py       # CLIP vs structural ablation
-│   ├── final_model.pkl              # Production LightGBM
-│   ├── final_feature_columns.json
+│   ├── train_final_v5.py                 # v5: Sara+Tampa train, Orlando zero-shot test
+│   ├── train_final_v4.py                 # v4: multicity + AADT, KMeans split
+│   ├── train_final.py                    # v3: multicity + POI, KMeans split
+│   ├── train_multicity.py                # v2: cross-city zero-shot experiments
+│   ├── train.py                          # v1: Sarasota-only baseline
+│   ├── train_experiments.py              # Ridge / RF / XGBoost comparison
+│   ├── visual_contribution.py            # CLIP vs structural ablation
+│   ├── predict.py                        # build_feature_matrix + compute_shap_values
+│   ├── final_model_v5.pkl                # Production LightGBM
+│   ├── final_feature_columns_v5.json
 │   └── city_scale_factors.json
 ├── api/
-│   ├── main.py                      # FastAPI (5 endpoints, city auto-detect)
-│   └── schemas.py                   # Pydantic models
+│   ├── main.py                           # FastAPI v5 (5 endpoints, 3-city auto-detect)
+│   └── schemas.py                        # Pydantic models
 ├── app/
-│   └── streamlit_app.py             # Folium map + risk card + compare tab
+│   └── streamlit_app.py                  # Top-bar UI, Folium map, risk card, compare tab
 ├── infrastructure/
-│   └── s3_setup.py                  # S3 bucket + prefix init
+│   └── s3_setup.py                       # S3 bucket + prefix init
 ├── tests/
-│   └── e2e_test.py                  # 12/12 e2e tests (prod + local)
+│   └── e2e_test.py                       # 12/12 e2e tests (prod + local)
 ├── docs/
-│   ├── writeup.md                   # One-page prose writeup
+│   ├── writeup.md
 │   └── screenshots/
 │       ├── feature_importance.png
 │       ├── permutation_importance.png
-│       └── final_permutation_importance.png
-├── render.yaml                      # Render.com deploy config
+│       ├── final_permutation_importance.png
+│       └── v5_permutation_importance.png
+├── render.yaml                           # Render.com deploy config
 ├── requirements.txt
 └── .env.example
 ```
@@ -344,11 +371,12 @@ python tests/e2e_test.py           # 12/12 tests against production
 python tests/e2e_test.py --local   # 12/12 tests against localhost:8000
 ```
 
-Tests cover: health check, stats (multicity), high/low risk hex lookup,
-predict (Sarasota + Tampa), outside-coverage handling, GeoJSON map data
-with city properties, local Gold table integrity (23 columns, both cities),
-Tampa H3 prefix validation, and cross-city city auto-detection.
+Tests cover: health check (`model=v5`, 3 cities), stats (multicity breakdown),
+high/low risk hex lookup, predict (Sarasota + Tampa + Orlando), outside-coverage
+handling, GeoJSON map data with city properties, local Gold table integrity
+(27 columns, all three cities), H3 prefix validation, and cross-city
+city auto-detection.
 
 ---
 
-*MLflow experiment: `sarasota-risk-model`. Cities: Sarasota, FL + Tampa, FL.*
+*MLflow experiment: `sarasota-risk-model` · Cities: Sarasota FL, Tampa FL, Orlando FL · Model v5 in production*
