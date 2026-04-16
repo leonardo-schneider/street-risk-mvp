@@ -36,6 +36,7 @@ REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 CITY_CONFIG = {
     "sarasota": {"place": "Sarasota, Florida, USA"},
     "tampa":    {"place": "Tampa, Florida, USA"},
+    "orlando":  {"place": "Orlando, Florida, USA"},
 }
 
 TARGET_POINTS = 1500
@@ -211,7 +212,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sample road points from OSM.")
     parser.add_argument(
         "--city",
-        choices=["sarasota", "tampa"],
+        choices=["sarasota", "tampa", "orlando"],
         default="sarasota",
         help="City to sample (default: sarasota).",
     )

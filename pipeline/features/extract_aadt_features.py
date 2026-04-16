@@ -55,6 +55,7 @@ PAGE_SIZE  = 1000
 CITY_BBOX = {
     "sarasota": {"xmin": -82.7, "ymin": 27.2, "xmax": -82.3, "ymax": 27.5},
     "tampa":    {"xmin": -82.6, "ymin": 27.8, "xmax": -82.2, "ymax": 28.1},
+    "orlando":  {"xmin": -81.6, "ymin": 28.3, "xmax": -81.1, "ymax": 28.8},
 }
 
 GOLD_PATH = DATA / "gold" / "training_table" / "multicity_gold.parquet"
@@ -256,6 +257,9 @@ def analyze(city: str, df_aadt: pd.DataFrame, dry_run: bool = False):
     print(f"  AADT ANALYSIS — {city.upper()}{mode}")
     print(f"{'='*60}")
 
+    if df_aadt.empty or "aadt_mean" not in df_aadt.columns:
+        print("  [warn] Empty AADT DataFrame — skipping analysis.")
+        return None
     n_total = len(df_aadt)
     n_covered = (df_aadt["aadt_mean"] > 0).sum()
     pct_covered = 100 * n_covered / n_total if n_total else 0
@@ -317,12 +321,20 @@ def process_city(city: str, dry_run: bool = False) -> pd.DataFrame:
 
     print(f"\n- AADT extraction — {city.upper()} -\n")
 
-    # 1. Load hexagon universe from gold table
-    if not GOLD_PATH.exists():
-        raise FileNotFoundError(f"Gold table not found: {GOLD_PATH}")
-    gold = pd.read_parquet(GOLD_PATH)
-    hex_list = gold[gold["city"] == city]["h3_index"].tolist()
-    print(f"  Hexagons in gold ({city}): {len(hex_list):,}")
+    # 1. Load hexagon universe — prefer gold table, fall back to road points
+    hex_list = []
+    if GOLD_PATH.exists():
+        gold = pd.read_parquet(GOLD_PATH)
+        hex_list = gold[gold["city"] == city]["h3_index"].tolist()
+        print(f"  Hexagons in gold ({city}): {len(hex_list):,}")
+
+    if not hex_list:
+        road_path = DATA / "bronze" / f"{city}_road_points.parquet"
+        if not road_path.exists():
+            raise FileNotFoundError(f"Neither gold table nor road points found for {city}")
+        roads = pd.read_parquet(road_path)
+        hex_list = roads["h3_index"].unique().tolist()
+        print(f"  [fallback] Hexagons from road points ({city}): {len(hex_list):,}")
 
     # 2. Download AADT segments
     segments = download_segments(city, dry_run=dry_run)
@@ -367,8 +379,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Extract FDOT AADT traffic volume features per H3 hexagon."
     )
-    parser.add_argument("--city", choices=["sarasota", "tampa"], default=None,
-                        help="City to process. Omit for both.")
+    parser.add_argument("--city", choices=["sarasota", "tampa", "orlando"], default=None,
+                        help="City to process. Omit for all configured cities.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Fetch first page only (1000 segments), run analysis, skip save.")
     args = parser.parse_args()

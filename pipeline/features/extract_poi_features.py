@@ -48,6 +48,7 @@ H3_RES    = 9
 CITY_PLACE = {
     "sarasota": "Sarasota, Florida, USA",
     "tampa":    "Tampa, Florida, USA",
+    "orlando":  "Orlando, Florida, USA",
 }
 
 # OSM tag groups to download and the column names they map to
@@ -225,7 +226,7 @@ def main(city: str = "sarasota", dry_run: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract OSM POI features per H3 hexagon.")
-    parser.add_argument("--city",     choices=["sarasota", "tampa"], default="sarasota")
+    parser.add_argument("--city",     choices=["sarasota", "tampa", "orlando"], default="sarasota")
     parser.add_argument("--dry-run",  action="store_true", help="First 20 hexagons only.")
     args = parser.parse_args()
     main(city=args.city, dry_run=args.dry_run)

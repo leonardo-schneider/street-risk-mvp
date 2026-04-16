@@ -37,6 +37,7 @@ REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 CITY_COUNTY = {
     "sarasota": "SARASOTA",
     "tampa":    "HILLSBOROUGH",
+    "orlando":  "ORANGE",
 }
 
 # ── FDOT endpoint ─────────────────────────────────────────────────────────────
@@ -235,7 +236,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--city",
-        choices=["sarasota", "tampa"],
+        choices=["sarasota", "tampa", "orlando"],
         default="sarasota",
         help="City to download crash data for (default: sarasota).",
     )

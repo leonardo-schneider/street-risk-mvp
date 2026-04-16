@@ -296,12 +296,18 @@ def main_single(city: str = "sarasota", use_probe: bool = False):
 
 # ── multi-city main ───────────────────────────────────────────────────────────
 
-def main_multicity(include_aadt: bool = False):
+def main_multicity(include_aadt: bool = False, include_orlando: bool = False):
     data   = ROOT / "data"
     v2     = include_aadt
-    label  = "multicity_v2 (with AADT)" if v2 else "multicity"
+    v3     = include_aadt and include_orlando
+    if v3:
+        label = "multicity_v3 (Sarasota+Tampa+Orlando)"
+    elif v2:
+        label = "multicity_v2 (with AADT)"
+    else:
+        label = "multicity"
     print(f"\n- Building Multi-city Gold table ({label}) -\n")
-    cities = ["sarasota", "tampa"]
+    cities = ["sarasota", "tampa"] + (["orlando"] if include_orlando else [])
 
     n_steps = 5 if v2 else 4
     print(f"Step 1/{n_steps}  Building per-city gold tables ...")
@@ -362,7 +368,9 @@ def main_multicity(include_aadt: bool = False):
 
     step_save = step_risk + 1
     print(f"\nStep {step_save}/{n_steps}  Saving ...")
-    fname      = "multicity_gold_v2.parquet" if v2 else "multicity_gold.parquet"
+    fname      = ("multicity_gold_v3.parquet" if v3
+                  else "multicity_gold_v2.parquet" if v2
+                  else "multicity_gold.parquet")
     gold_s3key = f"gold/training_table/{fname}"
     gold_local = data / "gold" / "training_table" / fname
     save_parquet(gold, gold_local)
@@ -394,13 +402,14 @@ def main_multicity(include_aadt: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build Gold training table(s).")
-    parser.add_argument("--city",       choices=["sarasota", "tampa"], default="sarasota")
+    parser.add_argument("--city",       choices=["sarasota", "tampa", "orlando"], default="sarasota")
     parser.add_argument("--multicity",  action="store_true", help="Stack sarasota + tampa.")
-    parser.add_argument("--aadt",       action="store_true", help="Include AADT features (requires --multicity). Outputs multicity_gold_v2.parquet.")
+    parser.add_argument("--aadt",       action="store_true", help="Include AADT features (requires --multicity).")
+    parser.add_argument("--orlando",    action="store_true", help="Include Orlando as third city (requires --multicity --aadt). Outputs multicity_gold_v3.parquet.")
     parser.add_argument("--use-probe",  action="store_true", help="Use probe features (sarasota only).")
     args = parser.parse_args()
 
     if args.multicity:
-        main_multicity(include_aadt=args.aadt)
+        main_multicity(include_aadt=args.aadt, include_orlando=args.orlando)
     else:
         main_single(city=args.city, use_probe=args.use_probe)

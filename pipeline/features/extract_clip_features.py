@@ -260,7 +260,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Extract CLIP features from Street View images in S3."
     )
-    parser.add_argument("--city",       choices=["sarasota", "tampa"], default="sarasota")
+    parser.add_argument("--city",       choices=["sarasota", "tampa", "orlando"], default="sarasota")
     parser.add_argument("--dry-run",    action="store_true", help="Process 10 images only.")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--use-probe",  action="store_true", help="Use trained probe (sarasota only).")

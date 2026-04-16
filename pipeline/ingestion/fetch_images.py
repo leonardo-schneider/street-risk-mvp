@@ -50,12 +50,14 @@ DATA_ROOT      = Path(__file__).parents[2] / "data"
 CITY_HEADINGS = {
     "sarasota": [180, 270],
     "tampa":    [0, 90, 180, 270],
+    "orlando":  [0, 90, 180, 270],
 }
 
 # Tampa city center (used for geographic clustering when --limit is set)
 CITY_CENTER = {
     "sarasota": (27.3364, -82.5307),
     "tampa":    (27.9506, -82.4572),
+    "orlando":  (28.5383, -81.3792),
 }
 
 IMG_SIZE       = "640x640"
@@ -327,7 +329,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--city",
-        choices=["sarasota", "tampa"],
+        choices=["sarasota", "tampa", "orlando"],
         default="sarasota",
         help="City to fetch images for (default: sarasota).",
     )
