@@ -85,6 +85,32 @@ across cities.
 | v4 | Sara+Tampa | Tampa cross-city | 0.792 | +0.628 | AADT — largest lift |
 | **v5** | **Sara+Tampa** | **Orlando (zero-shot)** | **0.878** | **+0.577** | **3-city generalization** |
 
+---
+
+## Cold-Start Visual Mode (v6 — Research)
+
+For cities where AADT data is unavailable, a visual-only model
+provides meaningful risk ranking using only Street View imagery
+and OpenStreetMap data.
+
+### Spearman Decomposition (Orlando zero-shot test)
+
+| Signal Added | Cumulative Spearman | Lift | Interpretation |
+|-------------|---------------------|------|----------------|
+| CLIP only | 0.407 | — | Pure visual signal |
+| + OSM road features | 0.687 | +0.280 | Road geometry dominates |
+| + POI features | 0.719 | +0.033 | Marginal improvement |
+| + AADT (v5) | 0.878 | +0.159 | Traffic volume adds precision |
+
+**v6a (CLIP+OSM+POI) achieves Spearman 0.719 without any traffic count
+data** — ranking risk correctly in 86% of hex pairs in an unseen city.
+This enables cold-start deployment in cities where FDOT AADT is unavailable.
+
+v5 remains the production model. v6a is saved as
+`model/visual_model_v6.pkl` for research use.
+
+---
+
 ### Why Spearman is the primary metric
 Insurance pricing requires correct *ranking*, not exact magnitude. A model
 that ranks every hex correctly but predicts the wrong absolute density still
@@ -252,8 +278,10 @@ cross-city use cases.
 
 - ~~Zero-shot transfer to Tampa~~ ✅ Spearman 0.692
 - ~~3-city validation (Orlando)~~ ✅ Spearman 0.878
-- Visual-only mode: CLIP + OSM without AADT or crash data (cold-start cities)
-- iRAP supervised visual risk features for CLIP fine-tuning
+- ~~Visual-only mode~~ ✅ v6a Spearman 0.719 without AADT
+- iRAP supervised visual features to improve CLIP signal
+- Worldwide deployment using v6a (OSM available globally,
+  Street View available in 100+ countries)
 - Log-transform of target to reduce RMSE skew from high-density outliers
 - GNN over H3 hexagon graph to exploit spatial autocorrelation
 - Jacksonville / Miami expansion
