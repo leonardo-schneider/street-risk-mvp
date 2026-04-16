@@ -89,7 +89,7 @@ st.set_page_config(
     page_title="Street Risk",
     page_icon="🛣️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── SpaceX design system ──────────────────────────────────────────────────────
@@ -119,15 +119,6 @@ h1, h2, h3, h4, h5, h6, [data-testid="stHeading"] {
     font-weight: 700 !important;
     font-family: 'Barlow Condensed', Arial, Verdana, sans-serif !important;
     margin-bottom: 0.5rem !important;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"], [data-testid="stSidebar"] > div {
-    background: #060606 !important;
-    border-right: 1px solid rgba(240,240,250,0.12) !important;
-}
-[data-testid="stSidebar"] *:not(svg):not(path):not(canvas) {
-    color: #f0f0fa !important;
 }
 
 /* Buttons */
@@ -276,18 +267,7 @@ footer { visibility: hidden; }
 [data-testid="stToolbar"] { display: none; }
 .stDeployButton { display: none; }
 
-/* Sidebar manual toggle button */
-div[data-testid="stSidebar"] .stButton button {
-    background: transparent !important;
-    border: 1px solid #333 !important;
-    color: white !important;
-    font-size: 16px !important;
-    padding: 2px 8px !important;
-    min-height: 28px !important;
-    border-radius: 4px !important;
-    letter-spacing: 0 !important;
-    text-transform: none !important;
-}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -796,144 +776,75 @@ def render_compare_tab():
 
 # ── main UI ───────────────────────────────────────────────────────────────────
 
-# Header banner
-st.markdown("""
-<div style="
-    width:100%;
-    background:#000000;
-    border-bottom:1px solid rgba(240,240,250,0.12);
-    padding:28px 0 22px 0;
-    margin-bottom:4px;
-    text-align:left;
-">
-  <div style="
-    font-family:Barlow Condensed,Arial,Verdana,sans-serif;
-    font-size:2.6rem;
-    font-weight:700;
-    letter-spacing:3.5px;
-    text-transform:uppercase;
-    color:#f0f0fa;
-    line-height:1;
-    margin-bottom:8px;
-  ">STREET RISK</div>
-  <div style="
-    font-family:Barlow Condensed,Arial,Verdana,sans-serif;
-    font-size:0.68rem;
-    font-weight:700;
-    letter-spacing:2.5px;
-    text-transform:uppercase;
-    color:rgba(240,240,250,0.38);
-    line-height:1;
-  ">MICRO-ZONE ROAD RISK INTELLIGENCE &mdash; SARASOTA &middot; TAMPA &middot; ORLANDO</div>
-</div>
-""", unsafe_allow_html=True)
-
-# Sidebar toggle state
-if "show_sidebar_content" not in st.session_state:
-    st.session_state.show_sidebar_content = True
-
-# Sidebar
-with st.sidebar:
-    # Manual toggle button — always visible
-    _col_title, _col_btn = st.columns([3, 1])
-    with _col_btn:
-        if st.button(
-            "◀" if st.session_state.show_sidebar_content else "▶",
-            key="toggle_sidebar",
-        ):
-            st.session_state.show_sidebar_content = not st.session_state.show_sidebar_content
-
-    if st.session_state.show_sidebar_content:
-        st.markdown("""
-        <div style="
-            font-family:Barlow Condensed,Arial,Verdana,sans-serif;
-            font-size:0.62rem;font-weight:700;
-            letter-spacing:2px;text-transform:uppercase;
-            color:rgba(240,240,250,0.35);
-            margin-bottom:10px;margin-top:6px;
-        ">CITY</div>
-        """, unsafe_allow_html=True)
-        selected_city = st.selectbox("City", ["Sarasota, FL", "Tampa, FL", "Orlando, FL"], label_visibility="collapsed")
-
-        st.markdown("<hr style='border-color:rgba(240,240,250,0.08);margin:14px 0;'>", unsafe_allow_html=True)
-        st.markdown("""
-        <div style="
-            font-family:Barlow Condensed,Arial,Verdana,sans-serif;
-            font-size:0.62rem;font-weight:700;
-            letter-spacing:2px;text-transform:uppercase;
-            color:rgba(240,240,250,0.35);
-            margin-bottom:14px;
-        ">SCORE A LOCATION</div>
-        """, unsafe_allow_html=True)
-        address = st.text_input("Address", value=DEFAULT_ADDRESS)
-        score_btn = st.button("Score this location", type="primary", use_container_width=True)
-
-        st.markdown("<hr style='border-color:rgba(240,240,250,0.08);margin:18px 0;'>", unsafe_allow_html=True)
-        st.markdown("""
-        <div style="
-            font-family:Barlow Condensed,Arial,Verdana,sans-serif;
-            font-size:0.62rem;font-weight:700;
-            letter-spacing:2px;text-transform:uppercase;
-            color:rgba(240,240,250,0.35);
-            margin-bottom:14px;
-        ">SYSTEM STATUS</div>
-        """, unsafe_allow_html=True)
-
-        stats = fetch_stats()
-        if stats:
-            city_key   = selected_city.split(",")[0].lower()
-            by_city    = stats.get("by_city", {})
-            city_stats = by_city.get(city_key, {})
-
-            n_hexes      = city_stats.get("hexagons",          stats["total_hexagons"])
-            mean_density = city_stats.get("mean_crash_density", stats["mean_crash_density"])
-
-            st.metric("Hexagons scored", n_hexes)
-            st.metric("Mean crash density", f"{mean_density:.1f} /km²")
-            tier_dist = stats.get("risk_tier_distribution", {})
-            if tier_dist:
-                order      = ["High", "Medium", "Low"]
-                labels     = [t for t in order if t in tier_dist]
-                values     = [tier_dist[t] for t in labels]
-                colors     = {"High": "#cf2b2b", "Medium": "#9e6200", "Low": "#1a6b3a"}
-                bar_colors = [colors[t] for t in labels]
-                fig_sb = go.Figure(go.Bar(
-                    x=labels,
-                    y=values,
-                    marker_color=bar_colors,
-                    text=values,
-                    textposition="outside",
-                    textfont=dict(color="rgba(240,240,250,0.55)", size=9),
-                ))
-                fig_sb.update_layout(
-                    height=140,
-                    margin=dict(l=0, r=0, t=8, b=0),
-                    xaxis=dict(
-                        tickfont=dict(color="rgba(240,240,250,0.4)", size=9, family="Arial"),
-                        showgrid=False, zeroline=False, showline=False,
-                    ),
-                    yaxis=dict(visible=False),
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    showlegend=False,
-                )
-                st.plotly_chart(fig_sb, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.warning("API unavailable — start the FastAPI server on port 8000.")
-    else:
-        # Content hidden — provide fallback values so downstream code doesn't crash
-        selected_city = "Sarasota, FL"
-        address       = DEFAULT_ADDRESS
-        score_btn     = False
-
 # Session state
-if "scored"    not in st.session_state: st.session_state.scored    = False
-if "score_lat" not in st.session_state: st.session_state.score_lat = None
-if "score_lon" not in st.session_state: st.session_state.score_lon = None
+if "scored"     not in st.session_state: st.session_state.scored     = False
+if "score_lat"  not in st.session_state: st.session_state.score_lat  = None
+if "score_lon"  not in st.session_state: st.session_state.score_lon  = None
 if "score_data" not in st.session_state: st.session_state.score_data = None
 if "hex_detail" not in st.session_state: st.session_state.hex_detail = None
 
-# Scoring action
+stats = fetch_stats()
+
+# ── Top control bar ───────────────────────────────────────────────────────────
+col_title, col_city, col_address, col_button, col_stats = st.columns([2, 1.5, 2.5, 1, 2])
+
+with col_title:
+    st.markdown("""
+    <div style="padding-top:2px;">
+      <div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+          font-size:1.9rem;font-weight:700;letter-spacing:3px;
+          text-transform:uppercase;color:#f0f0fa;line-height:1;margin-bottom:4px;">
+          STREET RISK</div>
+      <div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;
+          font-size:0.6rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+          color:rgba(240,240,250,0.35);">
+          SARASOTA &middot; TAMPA &middot; ORLANDO</div>
+    </div>""", unsafe_allow_html=True)
+
+with col_city:
+    st.markdown(
+        '<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+        'font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;'
+        'color:rgba(240,240,250,0.35);margin-bottom:2px;">CITY</div>',
+        unsafe_allow_html=True,
+    )
+    selected_city = st.selectbox(
+        "City", ["Sarasota, FL", "Tampa, FL", "Orlando, FL"],
+        label_visibility="collapsed",
+    )
+
+with col_address:
+    st.markdown(
+        '<div style="font-family:Barlow Condensed,Arial,Verdana,sans-serif;'
+        'font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;'
+        'color:rgba(240,240,250,0.35);margin-bottom:2px;">ADDRESS</div>',
+        unsafe_allow_html=True,
+    )
+    address = st.text_input(
+        "Address", placeholder="Enter address...",
+        label_visibility="collapsed",
+    )
+
+with col_button:
+    st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
+    score_btn = st.button("SCORE", use_container_width=True, type="primary")
+
+with col_stats:
+    if stats:
+        city_key   = selected_city.split(",")[0].lower()
+        city_stats = stats.get("by_city", {}).get(city_key, {})
+        n_hexes      = city_stats.get("hexagons",           stats["total_hexagons"])
+        mean_density = city_stats.get("mean_crash_density", stats["mean_crash_density"])
+        s1, s2 = st.columns(2)
+        s1.metric("HEXAGONS", f"{n_hexes:,}")
+        s2.metric("MEAN DENSITY", f"{mean_density:.0f}/km²")
+
+st.markdown(
+    "<hr style='border-color:rgba(240,240,250,0.12);margin:8px 0 10px 0;'>",
+    unsafe_allow_html=True,
+)
+
+# ── Scoring action ────────────────────────────────────────────────────────────
 if score_btn and address.strip():
     coords = geocode_address(address.strip())
     if coords is None:
@@ -944,18 +855,16 @@ if score_btn and address.strip():
         if "error" in result:
             st.error(f"API error: {result['error']}")
         else:
-            st.session_state.scored    = True
-            st.session_state.score_lat = lat
-            st.session_state.score_lon = lon
+            st.session_state.scored     = True
+            st.session_state.score_lat  = lat
+            st.session_state.score_lon  = lon
             st.session_state.score_data = result
-
-            # clip_scores are already in the /predict response
             st.session_state.hex_detail = result
 
 # Load map data
 geojson = fetch_map_data()
 
-# Tabs
+# ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_map, tab_compare = st.tabs(["RISK MAP", "COMPARE"])
 
 with tab_map:
@@ -969,8 +878,8 @@ with tab_map:
             f'RISK MAP — {selected_city.upper()}</div>',
             unsafe_allow_html=True,
         )
-        map_center  = CITY_CENTERS.get(selected_city, SARASOTA_CENTER)
-        map_zoom    = 12 if selected_city == "Orlando, FL" else 13
+        map_center = CITY_CENTERS.get(selected_city, SARASOTA_CENTER)
+        map_zoom   = 12 if selected_city == "Orlando, FL" else 13
         m = build_map(
             geojson,
             scored_lat=st.session_state.score_lat,
@@ -994,7 +903,7 @@ with tab_map:
                 font-family:Barlow Condensed,Arial,Verdana,sans-serif;
                 font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
                 color:rgba(240,240,250,0.2);">
-                ENTER AN ADDRESS AND SCORE TO BEGIN
+                ENTER AN ADDRESS ABOVE AND CLICK SCORE
             </div>""", unsafe_allow_html=True)
         else:
             data = st.session_state.score_data
