@@ -47,15 +47,15 @@ BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "street-risk-mvp")
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT            = Path(__file__).parents[1]
-GOLD_PATH       = ROOT / "data" / "gold" / "training_table" / "multicity_gold_v2.parquet"
-MODEL_PATH      = ROOT / "model" / "final_model_v4.pkl"
-FEAT_COLS_PATH  = ROOT / "model" / "final_feature_columns_v4.json"
+GOLD_PATH       = ROOT / "data" / "gold" / "training_table" / "multicity_gold_v3.parquet"
+MODEL_PATH      = ROOT / "model" / "final_model_v5.pkl"
+FEAT_COLS_PATH  = ROOT / "model" / "final_feature_columns_v5.json"
 SCALE_PATH      = ROOT / "model" / "city_scale_factors.json"
 
 # S3 keys for production (RENDER=true)
-S3_GOLD_KEY   = "gold/training_table/multicity_gold_v2.parquet"
-S3_MODEL_KEY  = "gold/final_model_v4.pkl"
-S3_FEAT_KEY   = "gold/final_feature_columns_v4.json"
+S3_GOLD_KEY   = "gold/training_table/multicity_gold_v3.parquet"
+S3_MODEL_KEY  = "gold/final_model_v5.pkl"
+S3_FEAT_KEY   = "gold/final_feature_columns_v5.json"
 S3_SCALE_KEY  = "gold/city_scale_factors.json"
 
 CLIP_COLS = [
@@ -68,6 +68,7 @@ CLIP_COLS = [
 CITY_BOUNDS = {
     "sarasota": {"lat": (27.2, 27.5), "lon": (-82.7, -82.3)},
     "tampa":    {"lat": (27.8, 28.1), "lon": (-82.7, -82.2)},
+    "orlando":  {"lat": (28.3, 28.8), "lon": (-81.6, -81.1)},
 }
 
 
@@ -82,8 +83,8 @@ def detect_city(lat: float, lon: float) -> str:
 # ── app ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Street Risk API",
-    description="Micro-zone road risk scores from street-level imagery — Sarasota & Tampa, FL",
-    version="4.0.0",
+    description="Micro-zone road risk scores from street-level imagery — Sarasota, Tampa & Orlando, FL",
+    version="5.0.0",
 )
 
 app.add_middleware(
@@ -222,9 +223,9 @@ def health():
     """Health check — returns API status and model load state."""
     return HealthResponse(
         status="ok",
-        model="v4" if _state.get("model_loaded") else "not loaded",
-        model_version="multicity+POI+AADT",
-        city="Sarasota, FL + Tampa, FL",
+        model="v5" if _state.get("model_loaded") else "not loaded",
+        model_version="multicity+POI+AADT+Orlando",
+        city="Sarasota, FL + Tampa, FL + Orlando, FL",
     )
 
 
