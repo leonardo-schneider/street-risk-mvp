@@ -6,7 +6,12 @@ Used by api/main.py at startup to compute SHAP values for all hexagons.
 
 import numpy as np
 import pandas as pd
-import shap
+
+try:
+    import shap as _shap
+    _SHAP_AVAILABLE = True
+except ImportError:
+    _SHAP_AVAILABLE = False
 
 
 def build_feature_matrix(df: pd.DataFrame, feat_cols: list) -> pd.DataFrame:
@@ -40,8 +45,10 @@ def compute_shap_values(model, X: pd.DataFrame) -> pd.DataFrame:
     Compute SHAP values for every row in X using TreeExplainer.
 
     Returns a DataFrame with same shape, columns, and index as X.
-    Each value is the SHAP contribution of that feature for that row.
+    Returns an empty DataFrame if shap is not installed.
     """
-    explainer = shap.TreeExplainer(model)
+    if not _SHAP_AVAILABLE:
+        return pd.DataFrame()
+    explainer = _shap.TreeExplainer(model)
     values    = explainer.shap_values(X)
     return pd.DataFrame(values, columns=X.columns, index=X.index)

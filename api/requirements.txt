@@ -8,5 +8,4 @@ h3
 numpy
 pydantic
 python-dotenv
-shap
 boto3
